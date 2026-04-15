@@ -73,6 +73,65 @@ bash /mnt/d/GitHub/Mistral/HTML/scripts/test_voxtral.sh
 
 ## Schnellstart (NVIDIA DGX Spark / Blackwell / ARM64)
 
+### Empfehlung für mehrere parallele User
+
+Wenn bis zu ~10 Nutzer parallel verarbeitet werden sollen, ist auf dem DGX Spark **vLLM** der empfohlene Pfad.
+Der direkte `transformers`-Server in `voxtral_server.py` bleibt als einfacher Fallback für Einzelbetrieb oder Debugging erhalten.
+
+### Produktionspfad: DGX Spark mit vLLM
+
+Diese Variante nutzt einen Docker-Container mit `vllm serve` und ist auf parallele Requests ausgelegt.
+
+#### 1. Dateien auf den DGX Spark kopieren
+```powershell
+pwsh -File .\scripts\deploy_voxtral_to_dgx.ps1 -RemoteUser <dein-user>
+```
+
+#### 2. vLLM-Setup auf dem DGX Spark starten
+```bash
+cd ~/voxtral-setup
+chmod +x 04_install_voxtral_dgx_spark_container.sh
+./04_install_voxtral_dgx_spark_container.sh
+```
+
+Das Skript erledigt:
+- Docker + NVIDIA Container Toolkit einrichten
+- Login nach `nvcr.io` per NGC API Key
+- Abfrage eines Hugging-Face-Tokens für Modellzugriff
+- Build eines ARM64-geeigneten `vLLM`-Images auf Basis von `nvcr.io/nvidia/pytorch:26.03-py3`
+- Einrichtung eines `systemd`-Dienstes `voxtral-vllm`
+
+#### 3. Service starten und prüfen
+```bash
+sudo systemctl start voxtral-vllm
+sudo systemctl status voxtral-vllm --no-pager -l
+curl http://127.0.0.1:8000/health
+```
+
+#### 4. Standard-Tuning für Parallelität
+
+Die vLLM-Variante startet mit diesen Defaults:
+- `--max-num-seqs 10`
+- `--max-num-batched-tokens 8192`
+- `--max-model-len 4096`
+- `--gpu-memory-utilization 0.82`
+- `--kv-cache-dtype fp8`
+
+Diese Werte sind ein praxisnaher Startpunkt für bis zu ca. 10 parallele Kurz-Requests.
+Für längere Audios oder niedrigere Latenz kann später nachjustiert werden.
+
+#### 5. Audio-Test
+```bash
+curl -X POST http://127.0.0.1:8000/v1/audio/transcriptions \
+	-F "file=@$HOME/audio.wav" \
+	-F "language=de" \
+	-F "response_format=json"
+```
+
+---
+
+### Fallback: nativer DGX-Spark-Server ohne vLLM
+
 Diese Variante ist für ein headless DGX-Spark-System mit Ubuntu und ARM64 gedacht.
 Der Server läuft nativ auf dem Gerät und ist danach im LAN über Port `8000` erreichbar.
 
@@ -146,18 +205,6 @@ Das Skript:
 - installiert `mistral-common[audio]` im Remote-venv
 - startet den `voxtral`-Service neu
 
-### 6. Container-Fallback
-
-Falls die native ARM64-Python-Installation Probleme macht, steht ein Container-Fallback bereit:
-
-```bash
-cd ~/voxtral-setup
-chmod +x 04_install_voxtral_dgx_spark_container.sh
-./04_install_voxtral_dgx_spark_container.sh
-```
-
-Der Container nutzt `nvcr.io/nvidia/pytorch:26.03-py3` als Basis und startet denselben `voxtral_server.py`-Dienst auf Port `8000`.
-
 ---
 
 ## Env-Variablen
@@ -199,6 +246,11 @@ Der Container nutzt `nvcr.io/nvidia/pytorch:26.03-py3` als Basis und startet den
 - Beim ersten Request lädt `VoxtralForConditionalGeneration.from_pretrained(...)` das Modell lokal.
 - Mit `journalctl -u voxtral -f` prüfen, ob gerade `Lade Voxtral-Modell auf GPU...` erscheint.
 - Sobald das Modell im Cache liegt, sind Folge-Requests deutlich schneller.
+
+### DGX Spark: mehrere parallele User / hoher Durchsatz
+- Dafür die **vLLM-Variante** mit `04_install_voxtral_dgx_spark_container.sh` verwenden.
+- Standardmäßig startet sie mit `--max-num-seqs 10` und `--performance`-tauglichen Batch-Settings.
+- Für noch mehr Parallelität zuerst die Batch-Latenz messen und dann `VOXTRAL_MAX_NUM_SEQS` bzw. `VOXTRAL_MAX_BATCHED_TOKENS` anpassen.
 
 ### Server startet, aber GPU wird nicht genutzt
 ```bash
