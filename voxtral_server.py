@@ -18,6 +18,7 @@ API-Endpunkte:
 import os
 import gc
 import time
+import importlib
 import logging
 import tempfile
 import threading
@@ -63,7 +64,26 @@ if DEVICE == "cuda":
 
 from transformers import VoxtralForConditionalGeneration, AutoProcessor
 
+
+def _apply_voxtral_transformers_compat_patch() -> None:
+    try:
+        processing_voxtral = importlib.import_module("transformers.models.voxtral.processing_voxtral")
+    except Exception:
+        return
+
+    if getattr(processing_voxtral, "TranscriptionRequest", None) is not None:
+        return
+
+    transcription_request_module = importlib.import_module("mistral_common.protocol.transcription.request")
+    transcription_request = transcription_request_module.TranscriptionRequest
+
+    processing_voxtral.TranscriptionRequest = transcription_request
+    logger.warning(
+        "Applied Voxtral compatibility patch for missing TranscriptionRequest in transformers.models.voxtral.processing_voxtral"
+    )
+
 logger.info(f"Lade Processor fuer {MODEL_ID}...")
+_apply_voxtral_transformers_compat_patch()
 processor = AutoProcessor.from_pretrained(MODEL_ID)
 logger.info("Processor geladen! (Modell wird on-demand geladen)")
 

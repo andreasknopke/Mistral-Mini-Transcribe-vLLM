@@ -1,4 +1,4 @@
-# Voxtral Lokal – Mistral STT auf eigener GPU (Windows 11 + WSL2)
+# Voxtral Lokal – Mistral STT auf eigener GPU (Windows 11 + WSL2 / NVIDIA DGX Spark)
 
 Mistral's Voxtral ist ein Open-Weight Speech-to-Text-Modell, das lokal auf NVIDIA GPUs läuft.
 Es wird über **vLLM** als OpenAI-kompatibler Server bereitgestellt.
@@ -71,6 +71,95 @@ bash /mnt/d/GitHub/Mistral/HTML/scripts/test_voxtral.sh
 
 ---
 
+## Schnellstart (NVIDIA DGX Spark / Blackwell / ARM64)
+
+Diese Variante ist für ein headless DGX-Spark-System mit Ubuntu und ARM64 gedacht.
+Der Server läuft nativ auf dem Gerät und ist danach im LAN über Port `8000` erreichbar.
+
+### Voraussetzungen auf dem DGX Spark
+- Ubuntu / NVIDIA DGX Spark OS mit funktionierendem `nvidia-smi`
+- Python 3.12+ und `sudo`
+- Netzwerkzugriff auf Hugging Face
+- Lizenzfreigabe für das gewünschte Modell auf Hugging Face
+
+### 1. Dateien vom Windows-Rechner auf den DGX Spark kopieren
+```powershell
+pwsh -File .\scripts\deploy_voxtral_to_dgx.ps1 -RemoteUser <dein-user>
+```
+
+Das kopiert folgende Dateien nach `~/voxtral-setup` auf dem DGX Spark:
+- `voxtral_server.py`
+- `scripts/03_install_voxtral_dgx_spark.sh`
+- `scripts/04_install_voxtral_dgx_spark_container.sh`
+
+### 2. Native Installation auf dem DGX Spark starten
+```bash
+cd ~/voxtral-setup
+chmod +x 03_install_voxtral_dgx_spark.sh
+./03_install_voxtral_dgx_spark.sh
+```
+
+Das Skript erledigt:
+- Installation der Ubuntu-Basis-Pakete
+- Anlage eines Python-venv unter `~/voxtral-env`
+- CUDA-fähige PyTorch-Installation für ARM64 (`cu130`)
+- Installation von FastAPI, Transformers, `mistral-common[audio]` und Audio-Dependencies
+- Hugging-Face-Login via `~/voxtral-env/bin/hf`
+- Einrichtung eines `systemd`-Dienstes namens `voxtral`
+
+### 3. Service starten und prüfen
+```bash
+sudo systemctl start voxtral
+sudo systemctl status voxtral --no-pager -l
+curl http://127.0.0.1:8000/health
+```
+
+Von Windows aus:
+```powershell
+pwsh -File .\scripts\test_voxtral_remote.ps1 -ServerUrl http://<DGX-IP>:8000
+```
+
+### 4. Ersten Audio-Request testen
+```bash
+curl -X POST http://127.0.0.1:8000/v1/audio/transcriptions \
+	-F "file=@$HOME/audio.wav" \
+	-F "language=de" \
+	-F "response_format=json"
+```
+
+Hinweise:
+- Der erste Request lädt das Voxtral-Modell in den Speicher und dauert deutlich länger.
+- `/health` zeigt davor oft `model_loaded: false`; das ist normal.
+- Das Modell wird nach 60 Sekunden Inaktivität automatisch wieder entladen.
+
+### 5. Hotfix für bestehende DGX-Installationen
+
+Falls ein bereits laufender DGX-Spark-Server noch den Fehler
+`NameError: name 'TranscriptionRequest' is not defined` wirft, kann das lokale Reparatur-Skript genutzt werden:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\fix_voxtral_remote.ps1
+```
+
+Das Skript:
+- lädt die aktuelle `voxtral_server.py` auf den DGX Spark hoch
+- installiert `mistral-common[audio]` im Remote-venv
+- startet den `voxtral`-Service neu
+
+### 6. Container-Fallback
+
+Falls die native ARM64-Python-Installation Probleme macht, steht ein Container-Fallback bereit:
+
+```bash
+cd ~/voxtral-setup
+chmod +x 04_install_voxtral_dgx_spark_container.sh
+./04_install_voxtral_dgx_spark_container.sh
+```
+
+Der Container nutzt `nvcr.io/nvidia/pytorch:26.03-py3` als Basis und startet denselben `voxtral_server.py`-Dienst auf Port `8000`.
+
+---
+
 ## Env-Variablen
 
 | Variable | Default | Beschreibung |
@@ -92,9 +181,24 @@ bash /mnt/d/GitHub/Mistral/HTML/scripts/test_voxtral.sh
 ```
 
 ### "Model not found" / 403
-- HuggingFace Login prüfen: `huggingface-cli whoami`
+- HuggingFace Login prüfen: `hf auth whoami`
 - Lizenz auf der Modell-Seite akzeptiert?
 - Token hat Read-Berechtigung?
+
+### DGX Spark: `NameError: name 'TranscriptionRequest' is not defined`
+- Ursache: In manchen `transformers`-Versionen fehlt ein Voxtral-Import zur Laufzeit.
+- Lösung: aktuelle `voxtral_server.py` verwenden und `mistral-common[audio]` installiert haben.
+- Reparatur lokal vom Windows-Rechner aus:
+	- `pwsh -ExecutionPolicy Bypass -File .\scripts\fix_voxtral_remote.ps1`
+
+### DGX Spark: `curl http://0.0.0.0:8000/health` antwortet nicht
+- `0.0.0.0` ist die Bind-Adresse des Servers, nicht die Client-Adresse.
+- Verwende stattdessen `http://127.0.0.1:8000/health` oder `http://<DGX-IP>:8000/health`.
+
+### DGX Spark: erster Request hängt minutenlang
+- Beim ersten Request lädt `VoxtralForConditionalGeneration.from_pretrained(...)` das Modell lokal.
+- Mit `journalctl -u voxtral -f` prüfen, ob gerade `Lade Voxtral-Modell auf GPU...` erscheint.
+- Sobald das Modell im Cache liegt, sind Folge-Requests deutlich schneller.
 
 ### Server startet, aber GPU wird nicht genutzt
 ```bash
