@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${HOME}/voxtral-vllm"
-IMAGE_NAME="voxtral-vllm-dgx:latest"
-SERVICE_NAME="voxtral-vllm"
-BASE_IMAGE="${VOXTRAL_VLLM_BASE_IMAGE:-nvcr.io/nvidia/vllm:26.03-py3}"
-MODEL_ID="${VOXTRAL_LOCAL_MODEL:-mistralai/Voxtral-Mini-3B-2507}"
-HOST_PORT="${VOXTRAL_PORT:-8000}"
-GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.82}"
-MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-4096}"
-MAX_NUM_SEQS="${VOXTRAL_MAX_NUM_SEQS:-4}"
-FORCE_REBUILD="${VOXTRAL_FORCE_REBUILD:-0}"
+APP_DIR="${HOME}/correction-llm-vllm"
+IMAGE_NAME="correction-llm-vllm:latest"
+SERVICE_NAME="correction-llm"
+BASE_IMAGE="${CORRECTION_LLM_VLLM_BASE_IMAGE:-nvcr.io/nvidia/vllm:26.03-py3}"
+MODEL_ID="${CORRECTION_LLM_MODEL:-mistralai/Ministral-8B-Instruct-2410}"
+SERVED_MODEL_NAME="${CORRECTION_LLM_SERVED_NAME:-correction-llm}"
+HOST_PORT="${CORRECTION_LLM_PORT:-8001}"
+GPU_MEMORY_UTILIZATION="${CORRECTION_LLM_GPU_MEMORY_UTILIZATION:-0.40}"
+MAX_MODEL_LEN="${CORRECTION_LLM_MAX_MODEL_LEN:-8192}"
+MAX_NUM_SEQS="${CORRECTION_LLM_MAX_NUM_SEQS:-2}"
+FORCE_REBUILD="${CORRECTION_LLM_FORCE_REBUILD:-0}"
+API_KEY="${CORRECTION_LLM_API_KEY:-local-correction-llm}"
 
-echo "======================================"
-echo " Voxtral vLLM auf DGX Spark installieren"
-echo "======================================"
+echo "==============================================="
+echo " Korrektur-LLM (OpenAI-kompatibel) installieren"
+echo "==============================================="
 echo ""
 echo "Modell:                  ${MODEL_ID}"
+echo "Served name:             ${SERVED_MODEL_NAME}"
 echo "Port:                    ${HOST_PORT}"
 echo "Max parallele Seqs:      ${MAX_NUM_SEQS}"
 echo "GPU Memory Utilization:  ${GPU_MEMORY_UTILIZATION}"
 echo "Base Image:              ${BASE_IMAGE}"
-echo "Force Rebuild:           ${FORCE_REBUILD}"
 echo ""
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
@@ -73,9 +75,8 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ENV PIP_NO_CACHE_DIR=1
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfile1 && rm -rf /var/lib/apt/lists/*
 RUN python -m pip install --upgrade pip "setuptools<82" && \
-  python -m pip install "mistral-common[audio]" "huggingface_hub[hf_transfer]"
+  python -m pip install "huggingface_hub[hf_transfer]"
 EXPOSE 8000
 EOF
 
@@ -86,14 +87,14 @@ else
   echo "Lokales Image ${IMAGE_NAME} bereits vorhanden - überspringe Rebuild"
 fi
 
-cat > "${APP_DIR}/vllm.env" <<EOF
+cat > "${APP_DIR}/llm.env" <<EOF
 HF_TOKEN=${HF_TOKEN}
 HF_HOME=/root/.cache/huggingface
 HF_HUB_ENABLE_HF_TRANSFER=1
 VLLM_WORKER_MULTIPROC_METHOD=spawn
 EOF
 
-cat > "${APP_DIR}/run_vllm.sh" <<EOF
+cat > "${APP_DIR}/run_llm.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -103,40 +104,37 @@ exec /usr/bin/docker run --rm \
   --ipc=host \
   --ulimit memlock=-1 \
   --shm-size=16g \
-  --env-file ${APP_DIR}/vllm.env \
+  --env-file ${APP_DIR}/llm.env \
   -p ${HOST_PORT}:8000 \
   -v ${HOME}/.cache/huggingface:/root/.cache/huggingface \
   ${IMAGE_NAME} \
   vllm serve ${MODEL_ID} \
   --host 0.0.0.0 \
   --port 8000 \
-  --tokenizer-mode mistral \
-  --config-format mistral \
-  --load-format mistral \
-  --enforce-eager \
+  --served-model-name ${SERVED_MODEL_NAME} \
+  --api-key ${API_KEY} \
   --dtype half \
   --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION} \
   --max-model-len ${MAX_MODEL_LEN} \
   --max-num-seqs ${MAX_NUM_SEQS}
 EOF
-chmod +x "${APP_DIR}/run_vllm.sh"
+chmod +x "${APP_DIR}/run_llm.sh"
 
 echo "[5/6] systemd Service einrichten"
-sudo systemctl disable --now voxtral >/dev/null 2>&1 || true
 sudo systemctl disable --now ${SERVICE_NAME} >/dev/null 2>&1 || true
 sudo docker rm -f ${SERVICE_NAME} >/dev/null 2>&1 || true
 
 SERVICE_FILE="/tmp/${SERVICE_NAME}.service"
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
-Description=Voxtral vLLM Server (DGX Spark)
+Description=Correction LLM vLLM Server (DGX Spark)
 After=network-online.target docker.service
 Requires=docker.service
 
 [Service]
 Type=simple
 ExecStartPre=-/usr/bin/docker rm -f ${SERVICE_NAME}
-ExecStart=/bin/bash ${APP_DIR}/run_vllm.sh
+ExecStart=/bin/bash ${APP_DIR}/run_llm.sh
 ExecStop=/usr/bin/docker stop ${SERVICE_NAME}
 Restart=always
 RestartSec=5
@@ -155,8 +153,5 @@ echo ""
 echo "Server starten:   sudo systemctl start ${SERVICE_NAME}"
 echo "Status anzeigen:  sudo systemctl status ${SERVICE_NAME} --no-pager -l"
 echo "Logs anzeigen:    journalctl -u ${SERVICE_NAME} -f"
-echo "Health-Check:     curl http://127.0.0.1:${HOST_PORT}/health"
-echo "Audio API:        http://127.0.0.1:${HOST_PORT}/v1/audio/transcriptions"
-echo ""
-echo "Hinweis: Dieser Pfad ist für parallele Benutzer mit vLLM gedacht."
-echo "Falls du lieber den direkten Transformers-Server willst, nutze 03_install_voxtral_dgx_spark.sh"
+echo "Models API:       curl http://127.0.0.1:${HOST_PORT}/v1/models -H \"Authorization: Bearer ${API_KEY}\""
+echo "Hinweis: Größere Mistral-Small-Modelle per CORRECTION_LLM_MODEL setzen und dafür WHISPERX_POOL_SIZE / VOXTRAL_MAX_NUM_SEQS reduzieren."

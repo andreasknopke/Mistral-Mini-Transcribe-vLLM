@@ -8,6 +8,7 @@ Es wird über **vLLM** als OpenAI-kompatibler Server bereitgestellt.
 - Realtime-Modell: https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602
 - Docs: https://docs.mistral.ai/capabilities/audio_transcription/
 - Blog: https://mistral.ai/news/voxtral-transcribe-2
+- DGX-Stack: [README_DGX_SPARK_STACK.md](README_DGX_SPARK_STACK.md)
 
 ---
 
