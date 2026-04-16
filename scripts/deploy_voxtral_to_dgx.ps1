@@ -6,13 +6,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$voxtralServer = Join-Path $repoRoot "voxtral_server.py"
+$installScript = Join-Path $PSScriptRoot "03_install_voxtral_dgx_spark.sh"
+$containerScript = Join-Path $PSScriptRoot "04_install_voxtral_dgx_spark_container.sh"
+
 $sshTarget = $RemoteUser + "@" + $RemoteHost
 $targetDisplay = $sshTarget + ":" + $RemoteDir
 Write-Host "Kopiere Voxtral-Dateien nach $targetDisplay ..." -ForegroundColor Cyan
 ssh $sshTarget "mkdir -p $RemoteDir"
-scp "./voxtral_server.py" ($targetDisplay + "/voxtral_server.py")
-scp "./scripts/03_install_voxtral_dgx_spark.sh" ($targetDisplay + "/03_install_voxtral_dgx_spark.sh")
-scp "./scripts/04_install_voxtral_dgx_spark_container.sh" ($targetDisplay + "/04_install_voxtral_dgx_spark_container.sh")
+scp $voxtralServer ($targetDisplay + "/voxtral_server.py")
+scp $installScript ($targetDisplay + "/03_install_voxtral_dgx_spark.sh")
+scp $containerScript ($targetDisplay + "/04_install_voxtral_dgx_spark_container.sh")
 
 Write-Host "" 
 Write-Host "Dateien kopiert." -ForegroundColor Green

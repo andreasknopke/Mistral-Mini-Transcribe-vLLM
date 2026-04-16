@@ -4,13 +4,13 @@ set -euo pipefail
 APP_DIR="${HOME}/voxtral-vllm"
 IMAGE_NAME="voxtral-vllm-dgx:latest"
 SERVICE_NAME="voxtral-vllm"
+BASE_IMAGE="${VOXTRAL_VLLM_BASE_IMAGE:-nvcr.io/nvidia/vllm:26.03-py3}"
 MODEL_ID="${VOXTRAL_LOCAL_MODEL:-mistralai/Voxtral-Mini-3B-2507}"
 HOST_PORT="${VOXTRAL_PORT:-8000}"
 GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.82}"
 MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-4096}"
-MAX_NUM_SEQS="${VOXTRAL_MAX_NUM_SEQS:-10}"
-MAX_BATCHED_TOKENS="${VOXTRAL_MAX_BATCHED_TOKENS:-8192}"
-KV_CACHE_DTYPE="${VOXTRAL_KV_CACHE_DTYPE:-fp8}"
+MAX_NUM_SEQS="${VOXTRAL_MAX_NUM_SEQS:-4}"
+FORCE_REBUILD="${VOXTRAL_FORCE_REBUILD:-0}"
 
 echo "======================================"
 echo " Voxtral vLLM auf DGX Spark installieren"
@@ -20,6 +20,8 @@ echo "Modell:                  ${MODEL_ID}"
 echo "Port:                    ${HOST_PORT}"
 echo "Max parallele Seqs:      ${MAX_NUM_SEQS}"
 echo "GPU Memory Utilization:  ${GPU_MEMORY_UTILIZATION}"
+echo "Base Image:              ${BASE_IMAGE}"
+echo "Force Rebuild:           ${FORCE_REBUILD}"
 echo ""
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
@@ -46,7 +48,7 @@ sudo systemctl enable docker >/dev/null 2>&1 || true
 sudo systemctl restart docker
 
 echo "[2/6] NGC Login prüfen"
-if ! sudo docker image inspect nvcr.io/nvidia/pytorch:26.03-py3 >/dev/null 2>&1; then
+if ! sudo docker image inspect "${BASE_IMAGE}" >/dev/null 2>&1; then
   if [ -z "${NGC_API_KEY:-}" ]; then
     echo "Bitte NGC API Key eingeben (https://org.ngc.nvidia.com/setup/api-key):"
     read -r -s NGC_API_KEY
@@ -66,17 +68,22 @@ mkdir -p "${APP_DIR}"
 mkdir -p "${HOME}/.cache/huggingface"
 
 cat > "${APP_DIR}/Dockerfile" <<'EOF'
-FROM nvcr.io/nvidia/pytorch:26.03-py3
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
 ENV PIP_NO_CACHE_DIR=1
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfile1 && rm -rf /var/lib/apt/lists/*
-RUN python -m pip install --upgrade pip wheel "setuptools<82" && \
-  python -m pip install "vllm[audio]" "mistral-common[audio]" "huggingface_hub[hf_transfer]"
+RUN python -m pip install --upgrade pip "setuptools<82" && \
+  python -m pip install "mistral-common[audio]" "huggingface_hub[hf_transfer]"
 EXPOSE 8000
 EOF
 
 echo "[4/6] Docker-Image bauen"
-sudo docker build -t "${IMAGE_NAME}" "${APP_DIR}"
+if [ "${FORCE_REBUILD}" = "1" ] || ! sudo docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+  sudo docker build --build-arg BASE_IMAGE="${BASE_IMAGE}" -t "${IMAGE_NAME}" "${APP_DIR}"
+else
+  echo "Lokales Image ${IMAGE_NAME} bereits vorhanden - überspringe Rebuild"
+fi
 
 cat > "${APP_DIR}/vllm.env" <<EOF
 HF_TOKEN=${HF_TOKEN}
@@ -105,18 +112,18 @@ exec /usr/bin/docker run --rm \
   --tokenizer-mode mistral \
   --config-format mistral \
   --load-format mistral \
-  --dtype bfloat16 \
+  --enforce-eager \
+  --dtype half \
   --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION} \
   --max-model-len ${MAX_MODEL_LEN} \
-  --max-num-seqs ${MAX_NUM_SEQS} \
-  --max-num-batched-tokens ${MAX_BATCHED_TOKENS} \
-  --kv-cache-dtype ${KV_CACHE_DTYPE} \
-  --enable-chunked-prefill
+  --max-num-seqs ${MAX_NUM_SEQS}
 EOF
 chmod +x "${APP_DIR}/run_vllm.sh"
 
 echo "[5/6] systemd Service einrichten"
 sudo systemctl disable --now voxtral >/dev/null 2>&1 || true
+sudo systemctl disable --now ${SERVICE_NAME} >/dev/null 2>&1 || true
+sudo docker rm -f ${SERVICE_NAME} >/dev/null 2>&1 || true
 
 SERVICE_FILE="/tmp/${SERVICE_NAME}.service"
 cat > "${SERVICE_FILE}" <<EOF
