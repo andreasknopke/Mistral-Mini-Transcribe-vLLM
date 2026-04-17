@@ -17,9 +17,12 @@ POOL_SIZE="${WHISPERX_POOL_SIZE:-2}"
 DEVICE="${WHISPERX_DEVICE:-cuda}"
 ALIGNMENT_DEVICE="${WHISPERX_ALIGNMENT_DEVICE:-cpu}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+CTRANSLATE2_VERSION="${CTRANSLATE2_VERSION:-4.7.1}"
 LLM_OPENAI_BASE_URL="${LLM_OPENAI_BASE_URL:-}"
 LLM_OPENAI_MODEL="${LLM_OPENAI_MODEL:-}"
 LLM_OPENAI_API_KEY="${LLM_OPENAI_API_KEY:-}"
+CTRANSLATE2_INSTALL_DIR="${HOME}/ctranslate2-install"
+CTRANSLATE2_LD_LIBRARY_PATH="${CTRANSLATE2_INSTALL_DIR}/lib:/usr/local/cuda/lib64:${VENV_DIR}/lib/python3.12/site-packages/nvidia/cu13/lib:${VENV_DIR}/lib/python3.12/site-packages/nvidia/cudnn/lib"
 
 log() {
     echo -e "${CYAN}$1${NC}"
@@ -32,6 +35,66 @@ step() {
 fail() {
     echo -e "${RED}$1${NC}"
     exit 1
+}
+
+install_ctranslate2_cuda_arm64() {
+    local src_dir="${HOME}/src/CTranslate2"
+    local build_dir="${src_dir}/build"
+    local cuda_pkg="${VENV_DIR}/lib/python3.12/site-packages/nvidia/cu13"
+    local cudnn_pkg="${VENV_DIR}/lib/python3.12/site-packages/nvidia/cudnn"
+
+    step "[5b/7] CTranslate2 mit CUDA für ARM64 bauen"
+    sudo apt install -y ninja-build libopenblas-dev
+
+    mkdir -p "${HOME}/src"
+    if [ ! -d "${src_dir}/.git" ]; then
+        git clone --recursive https://github.com/OpenNMT/CTranslate2.git "${src_dir}"
+    fi
+
+    pushd "${src_dir}" >/dev/null
+    git fetch --tags --force
+    git checkout "v${CTRANSLATE2_VERSION}"
+    git submodule update --init --recursive
+    popd >/dev/null
+
+    sudo mkdir -p /usr/local/cuda/include /usr/local/cuda/lib64
+    sudo ln -sf "${cudnn_pkg}"/include/cudnn*.h /usr/local/cuda/include/
+    sudo ln -sf "${cudnn_pkg}"/lib/libcudnn*.so.9 /usr/local/cuda/lib64/
+    sudo ln -sf /usr/local/cuda/lib64/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so
+
+    rm -rf "${build_dir}" "${CTRANSLATE2_INSTALL_DIR}"
+    mkdir -p "${build_dir}" "${CTRANSLATE2_INSTALL_DIR}"
+
+    export LD_LIBRARY_PATH="${CTRANSLATE2_LD_LIBRARY_PATH}:${LD_LIBRARY_PATH:-}"
+    export LIBRARY_PATH="/usr/local/cuda/lib64:${cuda_pkg}/lib:${cudnn_pkg}/lib:${LIBRARY_PATH:-}"
+    export C_INCLUDE_PATH="/usr/local/cuda/include:${cuda_pkg}/include:${cudnn_pkg}/include:${C_INCLUDE_PATH:-}"
+    export CPLUS_INCLUDE_PATH="/usr/local/cuda/include:${cuda_pkg}/include:${cudnn_pkg}/include:${CPLUS_INCLUDE_PATH:-}"
+
+    pushd "${build_dir}" >/dev/null
+    cmake .. -GNinja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${CTRANSLATE2_INSTALL_DIR}" \
+        -DWITH_CUDA=ON \
+        -DWITH_CUDNN=ON \
+        -DCUDA_DYNAMIC_LOADING=ON \
+        -DWITH_MKL=OFF \
+        -DWITH_DNNL=OFF \
+        -DWITH_OPENBLAS=ON \
+        -DOPENMP_RUNTIME=COMP \
+        -DBUILD_CLI=OFF \
+        -DBUILD_TESTS=OFF \
+        -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda
+    ninja -j4
+    ninja install
+    popd >/dev/null
+
+    pushd "${src_dir}/python" >/dev/null
+    pip install -r install_requirements.txt
+    CTRANSLATE2_ROOT="${CTRANSLATE2_INSTALL_DIR}" python setup.py bdist_wheel
+    pip install --force-reinstall --no-deps dist/*.whl
+    popd >/dev/null
+
+    pip install --force-reinstall --no-deps numpy==1.26.4 "setuptools<82"
 }
 
 log "======================================"
@@ -79,7 +142,12 @@ step "[5/7] Python-Abhängigkeiten installieren"
 pip install --upgrade --index-url https://download.pytorch.org/whl/cu130 torch torchvision torchaudio
 pip install -r "${APP_DIR}/requirements/requirements_cuda.txt"
 
+if [ "$(uname -m)" = "aarch64" ]; then
+    install_ctranslate2_cuda_arm64
+fi
+
 python - <<'PY'
+import ctranslate2
 import torch
 
 print(f"PyTorch: {torch.__version__}")
@@ -87,6 +155,10 @@ print(f"CUDA-Version: {torch.version.cuda}")
 print(f"CUDA verfügbar: {torch.cuda.is_available()}")
 if not torch.cuda.is_available():
     raise SystemExit("CUDA ist in PyTorch nicht verfügbar. WhisperX würde sonst nur im CPU-Modus laufen.")
+print(f"CTranslate2: {ctranslate2.__version__}")
+print(f"CTranslate2 CUDA Devices: {ctranslate2.get_cuda_device_count()}")
+if ctranslate2.get_cuda_device_count() < 1:
+    raise SystemExit("CTranslate2 erkennt keine CUDA-Geräte. WhisperX würde sonst im CPU-Modus laufen.")
 print(f"GPU: {torch.cuda.get_device_name(0)}")
 PY
 
@@ -108,6 +180,7 @@ LLM_OPENAI_API_KEY=${LLM_OPENAI_API_KEY}
 OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
 OLLAMA_MODEL=${OLLAMA_MODEL:-}
 PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+LD_LIBRARY_PATH=${CTRANSLATE2_LD_LIBRARY_PATH}
 EOF
 
 step "[7/7] systemd Service einrichten"
@@ -146,3 +219,4 @@ echo "UI/API:           http://127.0.0.1:${PORT}"
 echo "Gradio API:       http://127.0.0.1:${PORT}/gradio_api/openapi.json"
 echo "Hinweis: Für mehr Parallelität WHISPERX_POOL_SIZE erhöhen, aber VRAM-/RAM-Budget im Blick behalten."
 echo "Hinweis: Das Korrektur-LLM ist optional und kann extern von der Schreibdienst-App verwaltet werden."
+echo "Hinweis: Auf ARM64 baut das Skript CTranslate2 automatisch mit CUDA/cuDNN aus dem lokalen NVIDIA-Stack."

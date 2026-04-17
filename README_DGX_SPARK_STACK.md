@@ -137,6 +137,20 @@ Wenn das Korrektur-LLM auf dem Spark laufen soll, kann `05_install_whisperx_dgx_
 
 Wenn diese Werte leer bleiben, läuft WhisperX ohne lokale LLM-Nachkontrolle.
 
+## ARM64 / CTranslate2 CUDA
+
+Auf dem DGX Spark (ARM64) kann das PyPI-Wheel von `ctranslate2` trotz CUDA-fähigem PyTorch als CPU-only enden.
+Das Installationsskript `scripts/05_install_whisperx_dgx_spark.sh` baut `ctranslate2` deshalb auf `aarch64` automatisch aus den Quellen mit `WITH_CUDA=ON` und `WITH_CUDNN=ON`.
+
+Validierung auf dem Spark:
+
+```bash
+source ~/whisperx-env/bin/activate
+python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"
+```
+
+Erwartung: Ausgabe `1` oder größer.
+
 ## Troubleshooting
 
 ### WhisperX startet, aber keine GPU wird genutzt
@@ -145,6 +159,16 @@ Wenn diese Werte leer bleiben, läuft WhisperX ohne lokale LLM-Nachkontrolle.
 source ~/whisperx-env/bin/activate
 python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
+
+Zusätzlich prüfen:
+
+```bash
+source ~/whisperx-env/bin/activate
+python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"
+grep '^LD_LIBRARY_PATH=' ~/whisperx-spark/.env
+```
+
+Wenn `ctranslate2` hier `0` liefert, das Installationsskript erneut ausführen, damit der CUDA-Build inklusive `LD_LIBRARY_PATH` neu gesetzt wird.
 
 ### WhisperX lädt, aber Requests stauen sich
 
