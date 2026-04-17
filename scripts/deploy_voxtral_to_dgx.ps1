@@ -16,6 +16,7 @@ $correctionLlmInstallScript = Join-Path $PSScriptRoot "06_install_correction_llm
 $stackInstallScript = Join-Path $PSScriptRoot "07_install_dgx_spark_ai_stack.sh"
 $whisperxSparkDir = Join-Path $repoRoot "whisperx_spark"
 $stackReadme = Join-Path $repoRoot "README_DGX_SPARK_STACK.md"
+$localEnv = Join-Path $repoRoot ".env.local"
 
 $sshTarget = $RemoteUser + "@" + $RemoteHost
 $targetDisplay = $sshTarget + ":" + $RemoteDir
@@ -29,6 +30,9 @@ scp $whisperxInstallScript ($targetDisplay + "/05_install_whisperx_dgx_spark.sh"
 scp $correctionLlmInstallScript ($targetDisplay + "/06_install_correction_llm_dgx_spark.sh")
 scp $stackInstallScript ($targetDisplay + "/07_install_dgx_spark_ai_stack.sh")
 scp $stackReadme ($targetDisplay + "/README_DGX_SPARK_STACK.md")
+if (Test-Path $localEnv) {
+    scp $localEnv ($targetDisplay + "/.env.local")
+}
 scp -r $whisperxSparkDir ($targetDisplay + "/whisperx_spark")
 
 Write-Host "" 

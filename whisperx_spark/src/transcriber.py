@@ -25,8 +25,12 @@ LANGUAGE_OPTIONS = {
     "Italian": "it",
 }
 
-_ALIGNMENT_CACHE: dict[tuple[str, str], tuple[object, object]] = {}
+_ALIGNMENT_CACHE: dict[tuple[str, str, str], tuple[object, object]] = {}
 _ALIGNMENT_LOCK = threading.Lock()
+GERMAN_ALIGNMENT_MODEL = os.getenv(
+    "WHISPERX_GERMAN_ALIGNMENT_MODEL",
+    "jonatasgrosman/wav2vec2-large-xlsr-53-german",
+)
 
 
 def clear_memory(device: str) -> None:
@@ -37,17 +41,20 @@ def clear_memory(device: str) -> None:
 
 
 def _get_alignment_resources(language_code: str, alignment_device: str):
-    cache_key = (language_code, alignment_device)
+    align_model_id = GERMAN_ALIGNMENT_MODEL if language_code == "de" else None
+    cache_key = (language_code, alignment_device, align_model_id or "default")
     with _ALIGNMENT_LOCK:
         if cache_key in _ALIGNMENT_CACHE:
             return _ALIGNMENT_CACHE[cache_key]
 
         print(
-            f"--- ALIGN: Lade Alignment-Modell für Sprache '{language_code}' auf '{alignment_device}' ---"
+            f"--- ALIGN: Lade Alignment-Modell für Sprache '{language_code}' auf '{alignment_device}'"
+            f" ({align_model_id or 'whisperx-default'}) ---"
         )
         align_model, metadata = whisperx.load_align_model(
             language_code=language_code,
             device=alignment_device,
+            model_name=align_model_id,
         )
         _ALIGNMENT_CACHE[cache_key] = (align_model, metadata)
         return align_model, metadata
@@ -134,14 +141,23 @@ def transcribe_audio(
         if not full_text:
             full_text = result.get("text", "").strip()
 
-        segment_payload = [
-            {
+        segment_payload = []
+        for segment in final_segments:
+            normalized_segment = {
                 "start": round(float(segment.get("start", 0.0)), 3),
                 "end": round(float(segment.get("end", 0.0)), 3),
                 "text": segment.get("text", "").strip(),
             }
-            for segment in final_segments
-        ]
+            if "words" in segment and isinstance(segment.get("words"), list):
+                normalized_segment["words"] = [
+                    {
+                        key: round(float(value), 3) if key in {"start", "end", "score"} and isinstance(value, (int, float)) else value
+                        for key, value in word.items()
+                    }
+                    for word in segment["words"]
+                    if isinstance(word, dict)
+                ]
+            segment_payload.append(normalized_segment)
         segments_json = json.dumps(segment_payload, ensure_ascii=False)
         save_transcription(Path(validated_file_path).stem, full_text, segments_json)
 

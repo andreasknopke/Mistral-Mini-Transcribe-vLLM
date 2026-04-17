@@ -16,6 +16,7 @@ MODEL_NAME="${WHISPERX_MODEL:-large-v3}"
 POOL_SIZE="${WHISPERX_POOL_SIZE:-2}"
 DEVICE="${WHISPERX_DEVICE:-cuda}"
 ALIGNMENT_DEVICE="${WHISPERX_ALIGNMENT_DEVICE:-cpu}"
+GERMAN_ALIGNMENT_MODEL="${WHISPERX_GERMAN_ALIGNMENT_MODEL:-jonatasgrosman/wav2vec2-large-xlsr-53-german}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 CTRANSLATE2_VERSION="${CTRANSLATE2_VERSION:-4.7.1}"
 CTRANSLATE2_INSTALL_DIR="${HOME}/ctranslate2-install"
@@ -34,6 +35,24 @@ fail() {
     exit 1
 }
 
+load_env_file() {
+    local env_file="$1"
+    if [ -f "${env_file}" ]; then
+        echo "Lade Umgebungswerte aus ${env_file}"
+        set -a
+        . "${env_file}"
+        set +a
+    fi
+}
+
+run_sudo() {
+    if [ -n "${SUDO_PASSWORD:-}" ]; then
+        printf '%s\n' "${SUDO_PASSWORD}" | sudo -S "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 install_ctranslate2_cuda_arm64() {
     local src_dir="${HOME}/src/CTranslate2"
     local build_dir="${src_dir}/build"
@@ -41,7 +60,7 @@ install_ctranslate2_cuda_arm64() {
     local cudnn_pkg="${VENV_DIR}/lib/python3.12/site-packages/nvidia/cudnn"
 
     step "[5b/7] CTranslate2 mit CUDA für ARM64 bauen"
-    sudo apt install -y ninja-build libopenblas-dev
+    run_sudo apt install -y ninja-build libopenblas-dev
 
     mkdir -p "${HOME}/src"
     if [ ! -d "${src_dir}/.git" ]; then
@@ -54,10 +73,10 @@ install_ctranslate2_cuda_arm64() {
     git submodule update --init --recursive
     popd >/dev/null
 
-    sudo mkdir -p /usr/local/cuda/include /usr/local/cuda/lib64
-    sudo ln -sf "${cudnn_pkg}"/include/cudnn*.h /usr/local/cuda/include/
-    sudo ln -sf "${cudnn_pkg}"/lib/libcudnn*.so.9 /usr/local/cuda/lib64/
-    sudo ln -sf /usr/local/cuda/lib64/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so
+    run_sudo mkdir -p /usr/local/cuda/include /usr/local/cuda/lib64
+    run_sudo ln -sf "${cudnn_pkg}"/include/cudnn*.h /usr/local/cuda/include/
+    run_sudo ln -sf "${cudnn_pkg}"/lib/libcudnn*.so.9 /usr/local/cuda/lib64/
+    run_sudo ln -sf /usr/local/cuda/lib64/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so
 
     rm -rf "${build_dir}" "${CTRANSLATE2_INSTALL_DIR}"
     mkdir -p "${build_dir}" "${CTRANSLATE2_INSTALL_DIR}"
@@ -105,6 +124,7 @@ echo "Pool Size:       ${POOL_SIZE}"
 echo "Host/Port:       ${HOST}:${PORT}"
 echo "Device:          ${DEVICE}"
 echo "Alignment:       ${ALIGNMENT_DEVICE}"
+echo "DE Align Model:  ${GERMAN_ALIGNMENT_MODEL}"
 echo ""
 
 if ! command -v sudo >/dev/null 2>&1; then
@@ -115,12 +135,14 @@ step "[1/7] System prüfen"
 command -v nvidia-smi >/dev/null 2>&1 || fail "nvidia-smi nicht gefunden. NVIDIA-Treiber prüfen."
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || fail "${PYTHON_BIN} nicht gefunden."
 [ -d "${PWD}/whisperx_spark" ] || fail "whisperx_spark Verzeichnis nicht gefunden. Bitte zuerst Deploy-Skript ausführen."
+load_env_file "${PWD}/.env.local"
+load_env_file "${PWD}/whisperx_spark/.env.local"
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 "${PYTHON_BIN}" --version
 
 step "[2/7] Ubuntu-Pakete installieren"
-sudo apt update
-sudo apt install -y python3-venv python3-pip python3-dev build-essential ffmpeg libsndfile1 git curl
+run_sudo apt update
+run_sudo apt install -y python3-venv python3-pip python3-dev build-essential ffmpeg libsndfile1 git curl
 
 step "[3/7] Projektdateien kopieren"
 rm -rf "${APP_DIR}"
@@ -166,6 +188,7 @@ WHISPERX_MODEL=${MODEL_NAME}
 WHISPERX_DEVICE=${DEVICE}
 WHISPERX_POOL_SIZE=${POOL_SIZE}
 WHISPERX_ALIGNMENT_DEVICE=${ALIGNMENT_DEVICE}
+WHISPERX_GERMAN_ALIGNMENT_MODEL=${GERMAN_ALIGNMENT_MODEL}
 WHISPERX_HOST=${HOST}
 WHISPERX_PORT=${PORT}
 WHISPERX_ESTIMATED_WORKER_GB=${WHISPERX_ESTIMATED_WORKER_GB:-6}
@@ -196,9 +219,9 @@ TimeoutStartSec=0
 WantedBy=multi-user.target
 EOF
 
-sudo mv "${SERVICE_FILE}" "/etc/systemd/system/${SERVICE_NAME}.service"
-sudo systemctl daemon-reload
-sudo systemctl enable "${SERVICE_NAME}"
+run_sudo mv "${SERVICE_FILE}" "/etc/systemd/system/${SERVICE_NAME}.service"
+run_sudo systemctl daemon-reload
+run_sudo systemctl enable "${SERVICE_NAME}"
 
 echo ""
 log "Installation abgeschlossen."
