@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $voxtralServer = Join-Path $repoRoot "voxtral_server.py"
+$voxtralCompatProxy = Join-Path $repoRoot "voxtral_vllm_proxy.py"
 $installScript = Join-Path $PSScriptRoot "03_install_voxtral_dgx_spark.sh"
 $containerScript = Join-Path $PSScriptRoot "04_install_voxtral_dgx_spark_container.sh"
 $whisperxInstallScript = Join-Path $PSScriptRoot "05_install_whisperx_dgx_spark.sh"
@@ -21,6 +22,7 @@ $targetDisplay = $sshTarget + ":" + $RemoteDir
 Write-Host "Kopiere Voxtral-Dateien nach $targetDisplay ..." -ForegroundColor Cyan
 ssh $sshTarget "mkdir -p $RemoteDir"
 scp $voxtralServer ($targetDisplay + "/voxtral_server.py")
+scp $voxtralCompatProxy ($targetDisplay + "/voxtral_vllm_proxy.py")
 scp $installScript ($targetDisplay + "/03_install_voxtral_dgx_spark.sh")
 scp $containerScript ($targetDisplay + "/04_install_voxtral_dgx_spark_container.sh")
 scp $whisperxInstallScript ($targetDisplay + "/05_install_whisperx_dgx_spark.sh")

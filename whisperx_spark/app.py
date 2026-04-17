@@ -9,7 +9,6 @@ import gradio as gr
 import torch
 from dotenv import load_dotenv
 
-from src.llm_client import LLMClient
 from src.model_manager import DEFAULT_POOL_SIZE, MODELS, model_pool
 from src.transcriber import LANGUAGE_OPTIONS, transcribe_audio
 from src.utils import cleanup_temp_root
@@ -17,7 +16,6 @@ from src.utils import cleanup_temp_root
 load_dotenv()
 AUTH_USER = os.getenv("WHISPER_AUTH_USERNAME", "admin")
 AUTH_PASS = os.getenv("WHISPER_AUTH_PASSWORD", "password123")
-llm_client = LLMClient()
 
 if torch.cuda.is_available():
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -59,20 +57,18 @@ def get_pool_status() -> str:
     available = model_pool.get_available_count()
     total = model_pool.pool_size or DEFAULT_POOL_SIZE
     queue_size = model_pool.get_queue_size()
-    llm_status = "✅ Verbunden" if llm_client.is_available() else "❌ Nicht verfügbar"
-    return f"Worker: {available}/{total} verfügbar | Queue: {queue_size} wartend | LLM: {llm_status}"
+    return f"Worker: {available}/{total} verfügbar | Queue: {queue_size} wartend"
 
 
-def transcribe_with_llm_review(
+def transcribe_request(
     file_path,
     language,
     model_name,
     device,
     initial_prompt_user="",
     speed_mode=False,
-    llm_review=False,
 ):
-    result = transcribe_audio(
+    return transcribe_audio(
         file_path=file_path,
         language=language,
         model_name=model_name,
@@ -80,13 +76,6 @@ def transcribe_with_llm_review(
         initial_prompt_user=initial_prompt_user,
         speed_mode=speed_mode,
     )
-
-    if llm_review and llm_client.is_available() and result[0].strip():
-        corrected = llm_client.review_transcription(result[0], language=language)
-        if corrected.strip():
-            result[0] = corrected.strip()
-            result[2] = f"{result[2]} | LLM-Korrektur angewendet"
-    return result
 
 
 def build_interface():
@@ -123,11 +112,6 @@ def build_interface():
                         )
                         initial_prompt_input = gr.Textbox(label="Initial Prompt", lines=3)
                         speed_mode_input = gr.Checkbox(label="Speed Mode", value=False, visible=False)
-                        llm_review_input = gr.Checkbox(
-                            label="🤖 Korrektur-LLM anwenden",
-                            value=False,
-                            info="Nutzt eine OpenAI-kompatible LLM-API oder Ollama für minimale Nachkorrekturen.",
-                        )
                         transcribe_button = gr.Button("▶️ Transkription Starten", variant="primary")
 
                     with gr.Column(variant="panel"):
@@ -151,7 +135,7 @@ def build_interface():
                 btn_status.click(fn=get_pool_status, outputs=admin_status, api_name="system_pool_status")
 
         transcribe_button.click(
-            fn=transcribe_with_llm_review,
+            fn=transcribe_request,
             inputs=[
                 file_input,
                 language_dropdown,
@@ -159,7 +143,6 @@ def build_interface():
                 device_dropdown,
                 initial_prompt_input,
                 speed_mode_input,
-                llm_review_input,
             ],
             outputs=[text_output, json_output, time_output],
             api_name="start_process",
@@ -174,7 +157,6 @@ if __name__ == "__main__":
     device, label = get_device_info()
     print(f"--- SYSTEM: {label} ---")
     print(f"--- SYSTEM: Worker Pool: {model_pool.pool_size or DEFAULT_POOL_SIZE} Instanzen ---")
-    print(f"--- SYSTEM: LLM Client: {'Aktiv' if llm_client.is_available() else 'Inaktiv'} ---")
 
     if torch.cuda.is_available():
         torch.cuda.init()

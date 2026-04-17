@@ -18,9 +18,6 @@ DEVICE="${WHISPERX_DEVICE:-cuda}"
 ALIGNMENT_DEVICE="${WHISPERX_ALIGNMENT_DEVICE:-cpu}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 CTRANSLATE2_VERSION="${CTRANSLATE2_VERSION:-4.7.1}"
-LLM_OPENAI_BASE_URL="${LLM_OPENAI_BASE_URL:-}"
-LLM_OPENAI_MODEL="${LLM_OPENAI_MODEL:-}"
-LLM_OPENAI_API_KEY="${LLM_OPENAI_API_KEY:-}"
 CTRANSLATE2_INSTALL_DIR="${HOME}/ctranslate2-install"
 CTRANSLATE2_LD_LIBRARY_PATH="${CTRANSLATE2_INSTALL_DIR}/lib:/usr/local/cuda/lib64:${VENV_DIR}/lib/python3.12/site-packages/nvidia/cu13/lib:${VENV_DIR}/lib/python3.12/site-packages/nvidia/cudnn/lib"
 
@@ -108,7 +105,6 @@ echo "Pool Size:       ${POOL_SIZE}"
 echo "Host/Port:       ${HOST}:${PORT}"
 echo "Device:          ${DEVICE}"
 echo "Alignment:       ${ALIGNMENT_DEVICE}"
-echo "LLM Endpoint:    ${LLM_OPENAI_BASE_URL:-extern verwaltet / optional}"
 echo ""
 
 if ! command -v sudo >/dev/null 2>&1; then
@@ -173,12 +169,6 @@ WHISPERX_ALIGNMENT_DEVICE=${ALIGNMENT_DEVICE}
 WHISPERX_HOST=${HOST}
 WHISPERX_PORT=${PORT}
 WHISPERX_ESTIMATED_WORKER_GB=${WHISPERX_ESTIMATED_WORKER_GB:-6}
-LLM_TIMEOUT=${LLM_TIMEOUT:-120}
-LLM_OPENAI_BASE_URL=${LLM_OPENAI_BASE_URL}
-LLM_OPENAI_MODEL=${LLM_OPENAI_MODEL}
-LLM_OPENAI_API_KEY=${LLM_OPENAI_API_KEY}
-OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
-OLLAMA_MODEL=${OLLAMA_MODEL:-}
 PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 LD_LIBRARY_PATH=${CTRANSLATE2_LD_LIBRARY_PATH}
 EOF
@@ -218,5 +208,4 @@ echo "Logs anzeigen:    journalctl -u ${SERVICE_NAME} -f"
 echo "UI/API:           http://127.0.0.1:${PORT}"
 echo "Gradio API:       http://127.0.0.1:${PORT}/gradio_api/openapi.json"
 echo "Hinweis: Für mehr Parallelität WHISPERX_POOL_SIZE erhöhen, aber VRAM-/RAM-Budget im Blick behalten."
-echo "Hinweis: Das Korrektur-LLM ist optional und kann extern von der Schreibdienst-App verwaltet werden."
 echo "Hinweis: Auf ARM64 baut das Skript CTranslate2 automatisch mit CUDA/cuDNN aus dem lokalen NVIDIA-Stack."

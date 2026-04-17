@@ -9,7 +9,7 @@ Dieses Setup ergänzt den bestehenden Voxtral-Pfad um zwei weitere Dienste auf d
 ## Zielbild
 
 - `voxtral-vllm` liefert schnelle OpenAI-kompatible Audio-Transkription für Mistral/Voxtral.
-- `whisperx` liefert segmentierte Timestamps und optional LLM-basierte Nachkorrektur.
+- `whisperx` liefert segmentierte Timestamps.
 - optional kann `correction-llm` `/v1/models` und `/v1/chat/completions` für Textkorrektur oder Review liefern.
 
 ## Deployment
@@ -126,16 +126,6 @@ Die sichere Reihenfolge ist:
 1. Erst alle drei Dienste mit kleinen Defaults stabil starten.
 2. Dann WhisperX-Worker oder vLLM-Sequenzen langsam erhöhen.
 3. Erst danach ein größeres Korrektur-LLM ausprobieren.
-
-## WhisperX + Korrektur-LLM koppeln
-
-Wenn das Korrektur-LLM auf dem Spark laufen soll, kann `05_install_whisperx_dgx_spark.sh` diese Anbindung in `.env` bekommen:
-
-- `LLM_OPENAI_BASE_URL=http://127.0.0.1:8001/v1`
-- `LLM_OPENAI_MODEL=correction-llm`
-- `LLM_OPENAI_API_KEY=local-correction-llm`
-
-Wenn diese Werte leer bleiben, läuft WhisperX ohne lokale LLM-Nachkontrolle.
 
 ## ARM64 / CTranslate2 CUDA
 
