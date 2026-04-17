@@ -124,7 +124,7 @@ def transcribe_audio(
         if final_segments and not speed_mode:
             alignment_device = os.getenv(
                 "WHISPERX_ALIGNMENT_DEVICE",
-                "cpu" if device == "cuda" else device,
+                device,
             )
             align_model, metadata = _get_alignment_resources(detected_lang, alignment_device)
             aligned = whisperx.align(
