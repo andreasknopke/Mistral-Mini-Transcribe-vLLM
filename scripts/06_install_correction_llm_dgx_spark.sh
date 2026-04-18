@@ -1,24 +1,53 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${HOME}/correction-llm-vllm"
+STACK_OWNER="${SPARK_STACK_OWNER:-${SUDO_USER:-${USER:-$(id -un)}}}"
+STACK_HOME="${SPARK_STACK_HOME:-/home/${STACK_OWNER}}"
+APP_DIR="${STACK_HOME}/correction-llm-vllm"
 IMAGE_NAME="correction-llm-vllm:latest"
 SERVICE_NAME="correction-llm"
 BASE_IMAGE="${CORRECTION_LLM_VLLM_BASE_IMAGE:-nvcr.io/nvidia/vllm:26.03-py3}"
-MODEL_ID="${CORRECTION_LLM_MODEL:-mistralai/Ministral-8B-Instruct-2410}"
-SERVED_MODEL_NAME="${CORRECTION_LLM_SERVED_NAME:-correction-llm}"
-HOST_PORT="${CORRECTION_LLM_PORT:-8001}"
-GPU_MEMORY_UTILIZATION="${CORRECTION_LLM_GPU_MEMORY_UTILIZATION:-0.40}"
-MAX_MODEL_LEN="${CORRECTION_LLM_MAX_MODEL_LEN:-8192}"
-MAX_NUM_SEQS="${CORRECTION_LLM_MAX_NUM_SEQS:-2}"
+CORRECTION_LLM_PROFILE="${CORRECTION_LLM_PROFILE:-spark-concurrent}"
+DEFAULT_MODEL="mistral-nemo-instruct-2407-awq"
+DEFAULT_GPU_MEMORY_UTILIZATION="0.18"
+DEFAULT_MAX_MODEL_LEN="4096"
+DEFAULT_MAX_NUM_SEQS="4"
+if [ "${CORRECTION_LLM_PROFILE}" = "exclusive-quality" ]; then
+  DEFAULT_MODEL="mistral-small-3.2-24b-instruct-2506-text-only-heretic"
+  DEFAULT_GPU_MEMORY_UTILIZATION="0.55"
+  DEFAULT_MAX_MODEL_LEN="8192"
+  DEFAULT_MAX_NUM_SEQS="1"
+fi
+REQUESTED_MODEL="${CORRECTION_LLM_MODEL:-${DEFAULT_MODEL}}"
+MODEL_ID="${REQUESTED_MODEL}"
+if [ "${REQUESTED_MODEL}" = "mistral-small-3.2-24b-instruct-2506-text-only-heretic" ]; then
+  MODEL_ID="grayarea/Mistral-Small-3.2-24B-Instruct-2506-Text-Only-Heretic-v1.2"
+fi
+if [ "${REQUESTED_MODEL}" = "mistral-nemo-instruct-2407-awq" ]; then
+  MODEL_ID="casperhansen/mistral-nemo-instruct-2407-awq"
+fi
+SERVED_MODEL_NAME="${CORRECTION_LLM_SERVED_NAME:-${REQUESTED_MODEL}}"
+HOST_PORT="${CORRECTION_LLM_PORT:-9000}"
+GPU_MEMORY_UTILIZATION="${CORRECTION_LLM_GPU_MEMORY_UTILIZATION:-${DEFAULT_GPU_MEMORY_UTILIZATION}}"
+MAX_MODEL_LEN="${CORRECTION_LLM_MAX_MODEL_LEN:-${DEFAULT_MAX_MODEL_LEN}}"
+MAX_NUM_SEQS="${CORRECTION_LLM_MAX_NUM_SEQS:-${DEFAULT_MAX_NUM_SEQS}}"
 FORCE_REBUILD="${CORRECTION_LLM_FORCE_REBUILD:-0}"
 API_KEY="${CORRECTION_LLM_API_KEY:-local-correction-llm}"
+
+run_sudo() {
+  if [ -n "${SUDO_PASSWORD:-}" ]; then
+    printf '%s\n' "${SUDO_PASSWORD}" | sudo -S "$@"
+  else
+    sudo "$@"
+  fi
+}
 
 echo "==============================================="
 echo " Korrektur-LLM (OpenAI-kompatibel) installieren"
 echo "==============================================="
 echo ""
 echo "Modell:                  ${MODEL_ID}"
+echo "Profil:                  ${CORRECTION_LLM_PROFILE}"
 echo "Served name:             ${SERVED_MODEL_NAME}"
 echo "Port:                    ${HOST_PORT}"
 echo "Max parallele Seqs:      ${MAX_NUM_SEQS}"
@@ -33,34 +62,39 @@ fi
 
 echo "[1/6] Docker + NVIDIA Container Toolkit prüfen"
 if ! command -v docker >/dev/null 2>&1; then
-  sudo apt update
-  sudo apt install -y docker.io nvidia-container-toolkit
+  run_sudo apt update
+  run_sudo apt install -y docker.io nvidia-container-toolkit
 fi
 
 if ! command -v nvidia-ctk >/dev/null 2>&1; then
-  sudo apt update
-  sudo apt install -y nvidia-container-toolkit
+  run_sudo apt update
+  run_sudo apt install -y nvidia-container-toolkit
 fi
 
 if command -v nvidia-ctk >/dev/null 2>&1; then
-  sudo nvidia-ctk runtime configure --runtime=docker >/dev/null 2>&1 || true
+  run_sudo nvidia-ctk runtime configure --runtime=docker >/dev/null 2>&1 || true
 fi
 
-sudo systemctl enable docker >/dev/null 2>&1 || true
-sudo systemctl restart docker
+run_sudo systemctl enable docker >/dev/null 2>&1 || true
+run_sudo systemctl restart docker
 
 echo "[2/6] NGC Login prüfen"
-if ! sudo docker image inspect "${BASE_IMAGE}" >/dev/null 2>&1; then
+if ! run_sudo docker image inspect "${BASE_IMAGE}" >/dev/null 2>&1; then
   NGC_LOGIN_TOKEN="${NGC_API_KEY:-${NGC_TOKEN:-}}"
   if [ -z "${NGC_LOGIN_TOKEN}" ]; then
     echo "Bitte NGC API Key eingeben (https://org.ngc.nvidia.com/setup/api-key):"
     read -r -s NGC_LOGIN_TOKEN
     echo ""
   fi
-  printf '%s' "${NGC_LOGIN_TOKEN}" | sudo docker login nvcr.io --username '$oauthtoken' --password-stdin
+  run_sudo /bin/sh -c "printf '%s' $(printf '%q' "${NGC_LOGIN_TOKEN}") | docker login nvcr.io --username '\$oauthtoken' --password-stdin"
 fi
 
 echo "[3/6] Hugging Face Token prüfen"
+if [ -z "${HF_TOKEN:-}" ]; then
+  if [ -f "${STACK_HOME}/.cache/huggingface/token" ]; then
+    HF_TOKEN="$(tr -d '\r\n' < "${STACK_HOME}/.cache/huggingface/token")"
+  fi
+fi
 if [ -z "${HF_TOKEN:-}" ]; then
   echo "Bitte Hugging Face Token mit Read-Recht eingeben:"
   read -r -s HF_TOKEN
@@ -68,7 +102,7 @@ if [ -z "${HF_TOKEN:-}" ]; then
 fi
 
 mkdir -p "${APP_DIR}"
-mkdir -p "${HOME}/.cache/huggingface"
+mkdir -p "${STACK_HOME}/.cache/huggingface"
 
 cat > "${APP_DIR}/Dockerfile" <<'EOF'
 ARG BASE_IMAGE
@@ -81,8 +115,8 @@ EXPOSE 8000
 EOF
 
 echo "[4/6] Docker-Image bauen"
-if [ "${FORCE_REBUILD}" = "1" ] || ! sudo docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
-  sudo docker build --build-arg BASE_IMAGE="${BASE_IMAGE}" -t "${IMAGE_NAME}" "${APP_DIR}"
+if [ "${FORCE_REBUILD}" = "1" ] || ! run_sudo docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+  run_sudo docker build --build-arg BASE_IMAGE="${BASE_IMAGE}" -t "${IMAGE_NAME}" "${APP_DIR}"
 else
   echo "Lokales Image ${IMAGE_NAME} bereits vorhanden - überspringe Rebuild"
 fi
@@ -106,7 +140,7 @@ exec /usr/bin/docker run --rm \
   --shm-size=16g \
   --env-file ${APP_DIR}/llm.env \
   -p ${HOST_PORT}:8000 \
-  -v ${HOME}/.cache/huggingface:/root/.cache/huggingface \
+  -v ${STACK_HOME}/.cache/huggingface:/root/.cache/huggingface \
   ${IMAGE_NAME} \
   vllm serve ${MODEL_ID} \
   --host 0.0.0.0 \
@@ -121,8 +155,8 @@ EOF
 chmod +x "${APP_DIR}/run_llm.sh"
 
 echo "[5/6] systemd Service einrichten"
-sudo systemctl disable --now ${SERVICE_NAME} >/dev/null 2>&1 || true
-sudo docker rm -f ${SERVICE_NAME} >/dev/null 2>&1 || true
+run_sudo systemctl disable --now ${SERVICE_NAME} >/dev/null 2>&1 || true
+run_sudo docker rm -f ${SERVICE_NAME} >/dev/null 2>&1 || true
 
 SERVICE_FILE="/tmp/${SERVICE_NAME}.service"
 cat > "${SERVICE_FILE}" <<EOF
@@ -144,9 +178,9 @@ TimeoutStartSec=0
 WantedBy=multi-user.target
 EOF
 
-sudo mv "${SERVICE_FILE}" "/etc/systemd/system/${SERVICE_NAME}.service"
-sudo systemctl daemon-reload
-sudo systemctl enable "${SERVICE_NAME}"
+run_sudo mv "${SERVICE_FILE}" "/etc/systemd/system/${SERVICE_NAME}.service"
+run_sudo systemctl daemon-reload
+run_sudo systemctl enable "${SERVICE_NAME}"
 
 echo "[6/6] Fertig"
 echo ""
@@ -154,4 +188,5 @@ echo "Server starten:   sudo systemctl start ${SERVICE_NAME}"
 echo "Status anzeigen:  sudo systemctl status ${SERVICE_NAME} --no-pager -l"
 echo "Logs anzeigen:    journalctl -u ${SERVICE_NAME} -f"
 echo "Models API:       curl http://127.0.0.1:${HOST_PORT}/v1/models -H \"Authorization: Bearer ${API_KEY}\""
-echo "Hinweis: Größere Mistral-Small-Modelle per CORRECTION_LLM_MODEL setzen und dafür WHISPERX_POOL_SIZE / VOXTRAL_MAX_NUM_SEQS reduzieren."
+echo "Hinweis: Default-Profil 'spark-concurrent' nutzt ein quantisiertes Mistral-Nemo-AWQ-Modell für gleichzeitige Online-Transkription plus Korrektur auf demselben Spark."
+echo "Für maximale Korrekturqualität exklusiv ohne Parallelbetrieb: CORRECTION_LLM_PROFILE=exclusive-quality"

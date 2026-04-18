@@ -4,13 +4,21 @@ Dieses Setup ergänzt den bestehenden Voxtral-Pfad um zwei weitere Dienste auf d
 
 - Mistral-Transcribe / Voxtral über vLLM auf Port `8000`
 - WhisperX mit Timestamps und Worker-Pool auf Port `7860`
-- optional: OpenAI-kompatibles Korrektur-LLM über vLLM auf Port `8001`
+- optional: OpenAI-kompatibles Korrektur-LLM über vLLM auf Port `9000`
+- Spark Admin Webserver auf Port `7000`
 
 ## Zielbild
 
 - `voxtral-vllm` liefert schnelle OpenAI-kompatible Audio-Transkription für Mistral/Voxtral.
 - `whisperx` liefert segmentierte Timestamps.
 - optional kann `correction-llm` `/v1/models` und `/v1/chat/completions` für Textkorrektur oder Review liefern.
+- `spark-admin` liefert ein Web-Dashboard für Status, Logs, Konfigurationen und Service-Steuerung.
+
+### Empfohlener Betriebsmodus
+
+- Online-Diktat parallel für mehrere Nutzer: `voxtral-vllm` + `correction-llm`
+- Offline-/Batch-Transkription: `whisperx` sequentiell, idealerweise ohne gleichzeitig laufendes großes Korrekturmodell
+- Das Default-Setup ist deshalb auf einen gemeinsamen Betrieb von Voxtral plus Korrekturmodell optimiert, nicht auf maximale Größe jedes einzelnen Dienstes.
 
 ## Deployment
 
@@ -28,6 +36,8 @@ Dadurch landen auf dem Spark unter `~/voxtral-setup`:
 - `scripts/05_install_whisperx_dgx_spark.sh`
 - `scripts/06_install_correction_llm_dgx_spark.sh`
 - `scripts/07_install_dgx_spark_ai_stack.sh`
+- `scripts/08_install_spark_admin_dgx_spark.sh`
+- `spark_admin/`
 - `whisperx_spark/`
 
 ## Installationsreihenfolge
@@ -40,6 +50,7 @@ chmod +x *.sh
 ./04_install_voxtral_dgx_spark_container.sh
 ./05_install_whisperx_dgx_spark.sh
 ./06_install_correction_llm_dgx_spark.sh   # nur falls das LLM auf dem Spark laufen soll
+./08_install_spark_admin_dgx_spark.sh
 ```
 
 Alternativ als Sammelaufruf:
@@ -54,13 +65,21 @@ Alternativ als Sammelaufruf:
 |---|---:|---|
 | Voxtral / vLLM | `8000` | OpenAI-kompatible Audio-Transkription |
 | WhisperX | `7860` | Gradio-UI + API mit Timestamps |
-| Korrektur-LLM | `8001` | optionale OpenAI-kompatible Textkorrektur |
+| Korrektur-LLM | `9000` | optionale OpenAI-kompatible Textkorrektur |
+| Spark Admin | `7000` | Web-UI für Betrieb, Logs und Konfiguration |
 
 ## Starten und prüfen
 
 ```bash
 sudo systemctl start voxtral-vllm whisperx
 sudo systemctl status voxtral-vllm whisperx --no-pager -l
+```
+
+Spark Admin:
+
+```bash
+sudo systemctl start spark-admin
+sudo systemctl status spark-admin --no-pager -l
 ```
 
 Voxtral:
@@ -78,9 +97,17 @@ curl -I http://127.0.0.1:7860
 Optionales Korrektur-LLM:
 
 ```bash
-curl http://127.0.0.1:8001/v1/models \
+curl http://127.0.0.1:9000/v1/models \
   -H "Authorization: Bearer local-correction-llm"
 ```
+
+Spark Admin:
+
+```bash
+curl -I http://127.0.0.1:7000/login
+```
+
+Login erfolgt mit Linux-Benutzername und Passwort des Spark. Der Dienst speichert keine sudo-Credentials.
 
 ## WhisperX-API
 
@@ -99,15 +126,22 @@ Zusätzlich gibt es Admin-Funktionen für:
 
 ## Parallelität und Sizing
 
-Wichtiger Punkt: Alle drei Dienste teilen sich dieselbe GPU / denselben Gerätespeicher.
-Darum sind konservative Defaults gesetzt. Wenn das Korrektur-LLM extern von der Schreibdienst-App verwaltet wird, bleiben auf dem Spark nur Voxtral und WhisperX aktiv.
+Wichtiger Punkt: Alle drei Dienste teilen sich dieselbe GPU / denselben Unified-Memory-Pool.
+Darum sind die neuen Defaults auf das Zielbild "mehrere Online-Nutzer auf Voxtral + automatische Korrektur danach" ausgerichtet.
+`whisperx` sollte für Offline-Läufe sequentiell betrieben werden und nicht gleichzeitig mit einem großen BF16-Korrekturmodell.
 
 ### Empfohlene Defaults für den ersten Test
 
+- `VOXTRAL_PROFILE=spark-shared`
+- `VOXTRAL_GPU_MEMORY_UTILIZATION=0.28`
 - `VOXTRAL_MAX_NUM_SEQS=4`
 - `WHISPERX_POOL_SIZE=2`
-- optional: `CORRECTION_LLM_MAX_NUM_SEQS=2`
-- optional: `CORRECTION_LLM_MODEL=mistralai/Ministral-8B-Instruct-2410`
+- `CORRECTION_LLM_PROFILE=spark-concurrent`
+- `CORRECTION_LLM_MODEL=mistral-nemo-instruct-2407-awq`
+- `CORRECTION_LLM_GPU_MEMORY_UTILIZATION=0.18`
+- `CORRECTION_LLM_MAX_NUM_SEQS=4`
+
+Dieses Default-Profil lädt bewusst kein BF16-24B-Modell, weil das den Spark beim gleichzeitigen Betrieb mit Voxtral unnötig blockiert.
 
 ### Wenn du ein größeres Korrektur-LLM willst
 
@@ -115,6 +149,7 @@ Beispiel:
 
 ```bash
 export CORRECTION_LLM_MODEL=<dein-großes-mistral-modell>
+export CORRECTION_LLM_PROFILE=exclusive-quality
 export CORRECTION_LLM_GPU_MEMORY_UTILIZATION=0.55
 export WHISPERX_POOL_SIZE=1
 export VOXTRAL_MAX_NUM_SEQS=2
@@ -123,9 +158,10 @@ export VOXTRAL_MAX_NUM_SEQS=2
 
 Die sichere Reihenfolge ist:
 
-1. Erst alle drei Dienste mit kleinen Defaults stabil starten.
-2. Dann WhisperX-Worker oder vLLM-Sequenzen langsam erhöhen.
-3. Erst danach ein größeres Korrektur-LLM ausprobieren.
+1. Erst `voxtral-vllm` plus `correction-llm` mit dem Shared-Profil stabil starten.
+2. Dann `VOXTRAL_MAX_NUM_SEQS` und `CORRECTION_LLM_MAX_NUM_SEQS` langsam erhöhen.
+3. `whisperx` für Offline-Läufe nur dann zusätzlich aktivieren, wenn genug freier Unified Memory übrig bleibt.
+4. Große BF16-24B-Korrekturmodelle nur exklusiv statt parallel betreiben.
 
 ## ARM64 / CTranslate2 CUDA
 

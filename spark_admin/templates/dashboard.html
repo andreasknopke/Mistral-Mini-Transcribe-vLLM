@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Spark Admin</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <h1>Spark Admin Control Center</h1>
+            <p>WhisperX, Voxtral und Correction-LLM zentral verwalten.</p>
+        </div>
+        <div class="topbar-actions">
+            <span>Angemeldet als <strong>{{ username }}</strong></span>
+            <form method="post" action="/logout">
+                <button type="submit">Logout</button>
+            </form>
+        </div>
+    </header>
+
+    <main class="layout">
+        <section class="panel metrics-panel">
+            <h2>Systemzustand</h2>
+            <div id="system-summary" class="system-summary"></div>
+            <div id="gpu-cards" class="gpu-grid"></div>
+        </section>
+
+        <section class="panel services-panel">
+            <h2>Dienste</h2>
+            <div id="service-cards" class="service-grid">
+                {% for service in services %}
+                <article class="service-card" data-service-key="{{ service.key }}">
+                    <div class="service-header">
+                        <h3>{{ service.label }}</h3>
+                        <span class="badge">{{ service.service }}</span>
+                    </div>
+                    <div class="service-state">
+                        <div>Status: <strong data-field="state">{{ service.status.active_state }}/{{ service.status.sub_state }}</strong></div>
+                        <div>Port: <strong>{{ service.port }}</strong></div>
+                        <div>HTTP: <strong data-field="http">{% if service.http.ok %}OK ({{ service.http.status_code }}){% else %}Fehler{% endif %}</strong></div>
+                    </div>
+                    <div class="button-row">
+                        <button data-action="start">Start</button>
+                        <button data-action="restart">Restart</button>
+                        <button data-action="stop" class="danger">Stop</button>
+                        <button data-open-logs>Logs</button>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            <h3>Speicherverbrauch Dienste (Live)</h3>
+            <div class="memory-chart-wrap">
+                <canvas id="memory-chart" width="800" height="220"></canvas>
+                <div id="memory-chart-legend" class="chart-legend"></div>
+            </div>
+            <h3>Netzwerk &amp; Verbindungen (Live)</h3>
+            <div class="memory-chart-wrap">
+                <canvas id="network-chart" width="800" height="180"></canvas>
+                <div id="network-chart-legend" class="chart-legend"></div>
+            </div>
+            <h3>CPU &amp; GPU Auslastung (Live)</h3>
+            <div class="memory-chart-wrap">
+                <canvas id="cpu-chart" width="800" height="220"></canvas>
+                <div id="cpu-chart-legend" class="chart-legend"></div>
+            </div>
+            <h3>Festplatte (Live)</h3>
+            <div class="memory-chart-wrap">
+                <canvas id="disk-chart" width="800" height="200"></canvas>
+                <div id="disk-chart-legend" class="chart-legend"></div>
+            </div>
+        </section>
+
+        <section class="panel config-panel">
+            <h2>Konfigurationen</h2>
+            <div class="config-controls">
+                <label>Datei
+                    <select id="config-select">
+                        {% for config in configs %}
+                        <option value="{{ config.id }}">{{ config.service }} → {{ config.label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <button id="reload-config">Neu laden</button>
+                <button id="save-config">Speichern</button>
+                <button id="save-restart-config">Speichern + Restart</button>
+            </div>
+            <div id="config-meta" class="meta-line"></div>
+            <textarea id="config-content" class="config-editor" spellcheck="false"></textarea>
+        </section>
+
+        <section class="panel logs-panel">
+            <div class="panel-header-inline">
+                <h2>Service-Logs</h2>
+                <label>Dienst
+                    <select id="log-service-select">
+                        {% for service in services %}
+                        <option value="{{ service.key }}">{{ service.label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <button id="refresh-logs">Logs aktualisieren</button>
+            </div>
+            <pre id="logs-output" class="terminal large"></pre>
+        </section>
+    </main>
+
+    <script id="bootstrap-data" type="application/json">{{ {"services": services, "configs": configs} | tojson }}</script>
+    <script src="/static/app.js?v=20260418m"></script>
+</body>
+</html>

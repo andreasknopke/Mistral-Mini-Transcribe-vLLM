@@ -14,7 +14,9 @@ $containerScript = Join-Path $PSScriptRoot "04_install_voxtral_dgx_spark_contain
 $whisperxInstallScript = Join-Path $PSScriptRoot "05_install_whisperx_dgx_spark.sh"
 $correctionLlmInstallScript = Join-Path $PSScriptRoot "06_install_correction_llm_dgx_spark.sh"
 $stackInstallScript = Join-Path $PSScriptRoot "07_install_dgx_spark_ai_stack.sh"
+$sparkAdminInstallScript = Join-Path $PSScriptRoot "08_install_spark_admin_dgx_spark.sh"
 $whisperxSparkDir = Join-Path $repoRoot "whisperx_spark"
+$sparkAdminDir = Join-Path $repoRoot "spark_admin"
 $stackReadme = Join-Path $repoRoot "README_DGX_SPARK_STACK.md"
 $localEnv = Join-Path $repoRoot ".env.local"
 
@@ -29,11 +31,13 @@ scp $containerScript ($targetDisplay + "/04_install_voxtral_dgx_spark_container.
 scp $whisperxInstallScript ($targetDisplay + "/05_install_whisperx_dgx_spark.sh")
 scp $correctionLlmInstallScript ($targetDisplay + "/06_install_correction_llm_dgx_spark.sh")
 scp $stackInstallScript ($targetDisplay + "/07_install_dgx_spark_ai_stack.sh")
+scp $sparkAdminInstallScript ($targetDisplay + "/08_install_spark_admin_dgx_spark.sh")
 scp $stackReadme ($targetDisplay + "/README_DGX_SPARK_STACK.md")
 if (Test-Path $localEnv) {
     scp $localEnv ($targetDisplay + "/.env.local")
 }
 scp -r $whisperxSparkDir ($targetDisplay + "/whisperx_spark")
+scp -r $sparkAdminDir ($targetDisplay + "/spark_admin")
 
 Write-Host "" 
 Write-Host "Dateien kopiert." -ForegroundColor Green

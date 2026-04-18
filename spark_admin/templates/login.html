@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Spark Admin Login</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+    <main class="login-card">
+        <h1>Spark Admin</h1>
+        <p>Login mit den Linux-Zugangsdaten des Spark.</p>
+        {% if error %}
+        <div class="error-banner">{{ error }}</div>
+        {% endif %}
+        <form method="post" action="/login" class="login-form">
+            <label>Benutzername
+                <input type="text" name="username" autocomplete="username" required>
+            </label>
+            <label>Passwort
+                <input type="password" name="password" autocomplete="current-password" required>
+            </label>
+            <button type="submit">Einloggen</button>
+        </form>
+    </main>
+</body>
+</html>

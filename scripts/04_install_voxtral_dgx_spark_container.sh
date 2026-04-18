@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${HOME}/voxtral-vllm"
+STACK_OWNER="${SPARK_STACK_OWNER:-${SUDO_USER:-${USER:-$(id -un)}}}"
+STACK_HOME="${SPARK_STACK_HOME:-/home/${STACK_OWNER}}"
+APP_DIR="${STACK_HOME}/voxtral-vllm"
 IMAGE_NAME="voxtral-vllm-dgx:latest"
 SERVICE_NAME="voxtral-vllm"
 BASE_IMAGE="${VOXTRAL_VLLM_BASE_IMAGE:-nvcr.io/nvidia/vllm:26.03-py3}"
 MODEL_ID="${VOXTRAL_LOCAL_MODEL:-mistralai/Voxtral-Mini-3B-2507}"
 HOST_PORT="${VOXTRAL_PORT:-8000}"
-GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.82}"
-MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-8192}"
-MAX_NUM_SEQS="${VOXTRAL_MAX_NUM_SEQS:-4}"
+VOXTRAL_PROFILE="${VOXTRAL_PROFILE:-spark-shared}"
+DEFAULT_GPU_MEMORY_UTILIZATION="0.82"
+DEFAULT_MAX_NUM_SEQS="4"
+DEFAULT_MAX_MODEL_LEN="8192"
+if [ "${VOXTRAL_PROFILE}" = "spark-shared" ]; then
+  DEFAULT_GPU_MEMORY_UTILIZATION="0.28"
+  DEFAULT_MAX_NUM_SEQS="4"
+  DEFAULT_MAX_MODEL_LEN="8192"
+fi
+GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-${DEFAULT_GPU_MEMORY_UTILIZATION}}"
+MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-${DEFAULT_MAX_MODEL_LEN}}"
+MAX_NUM_SEQS="${VOXTRAL_MAX_NUM_SEQS:-${DEFAULT_MAX_NUM_SEQS}}"
 FORCE_REBUILD="${VOXTRAL_FORCE_REBUILD:-0}"
 
 run_sudo() {
@@ -25,6 +36,7 @@ echo " Voxtral vLLM auf DGX Spark installieren"
 echo "======================================"
 echo ""
 echo "Modell:                  ${MODEL_ID}"
+echo "Profil:                  ${VOXTRAL_PROFILE}"
 echo "Port:                    ${HOST_PORT}"
 echo "Max parallele Seqs:      ${MAX_NUM_SEQS}"
 echo "GPU Memory Utilization:  ${GPU_MEMORY_UTILIZATION}"
@@ -68,13 +80,18 @@ fi
 
 echo "[3/6] Hugging Face Token prüfen"
 if [ -z "${HF_TOKEN:-}" ]; then
+  if [ -f "${STACK_HOME}/.cache/huggingface/token" ]; then
+    HF_TOKEN="$(tr -d '\r\n' < "${STACK_HOME}/.cache/huggingface/token")"
+  fi
+fi
+if [ -z "${HF_TOKEN:-}" ]; then
   echo "Bitte Hugging Face Token mit Read-Recht eingeben:"
   read -r -s HF_TOKEN
   echo ""
 fi
 
 mkdir -p "${APP_DIR}"
-mkdir -p "${HOME}/.cache/huggingface"
+mkdir -p "${STACK_HOME}/.cache/huggingface"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROXY_SOURCE="${SCRIPT_DIR}/voxtral_vllm_proxy.py"
@@ -170,7 +187,7 @@ exec /usr/bin/docker run --rm \
   --shm-size=16g \
   --env-file ${APP_DIR}/vllm.env \
   -p ${HOST_PORT}:8000 \
-  -v ${HOME}/.cache/huggingface:/root/.cache/huggingface \
+  -v ${STACK_HOME}/.cache/huggingface:/root/.cache/huggingface \
   ${IMAGE_NAME} \
   /bin/bash -lc 'python /app/voxtral_vllm_proxy.py & exec vllm serve ${MODEL_ID} \
   --host 127.0.0.1 \
@@ -224,4 +241,5 @@ echo "Health-Check:     curl http://127.0.0.1:${HOST_PORT}/health"
 echo "Audio API:        http://127.0.0.1:${HOST_PORT}/v1/audio/transcriptions"
 echo ""
 echo "Hinweis: Dieser Pfad ist für parallele Benutzer mit vLLM gedacht."
+echo "Default-Profil 'spark-shared' reserviert absichtlich weniger Unified Memory, damit parallel noch ein Korrektur-LLM auf dem Spark laufen kann."
 echo "Falls du lieber den direkten Transformers-Server willst, nutze 03_install_voxtral_dgx_spark.sh"
