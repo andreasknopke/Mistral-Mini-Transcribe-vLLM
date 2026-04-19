@@ -111,7 +111,16 @@ body.login-page {
     .services-panel {
         grid-column: span 6;
     }
-
+    .metrics-panel {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        /* Don't let this panel grow the grid row — right panel determines height */
+        grid-row: 1;
+    }
+    .services-panel {
+        grid-row: 1;
+    }
     .config-panel,
     .logs-panel {
         grid-column: span 12;
@@ -306,4 +315,52 @@ input {
     overflow: hidden;
     font-size: 0.8rem;
     margin-bottom: 0.75rem;
+}
+
+/* ───── Embedded Terminal ───── */
+.terminal-panel {
+    margin-top: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #0f172a;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.terminal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 1rem;
+    background: var(--panel-2);
+    border-bottom: 1px solid var(--border);
+}
+.terminal-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--text);
+}
+.terminal-header button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 0.15rem 0.5rem;
+}
+.terminal-header button:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+#xterm-container {
+    flex: 1;
+    padding: 4px;
+    min-height: 0;
+    overflow: hidden;
+}
+#xterm-container .xterm {
+    height: 100%;
 }

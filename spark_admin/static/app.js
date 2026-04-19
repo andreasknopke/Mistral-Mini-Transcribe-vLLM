@@ -19,13 +19,16 @@ const CHART_COLORS = {
     voxtral:    { line: '#38bdf8', fill: 'rgba(56,189,248,0.15)' },  // blue
     correction: { line: '#22c55e', fill: 'rgba(34,197,94,0.15)' },   // green
     whisperx:   { line: '#f59e0b', fill: 'rgba(245,158,11,0.15)' },  // amber
+    vibevoice:  { line: '#a78bfa', fill: 'rgba(167,139,250,0.15)' }, // purple
 };
 const CHART_MAX_POINTS = 60;  // 60 ticks × 10s = 10 min window
 const memoryHistory = {
     voxtral: [],
     correction: [],
     whisperx: [],
+    vibevoice: [],
 };
+const unifiedMemHistory = [];  // total system RAM (includes GPU on UMA)
 let totalMemoryGiB = 110;  // practical vLLM limit on 128GB UMA
 let chartInitialized = false;
 
@@ -38,9 +41,10 @@ const CONN_COLORS = {
     voxtral: '#3b82f6',
     correction: '#22c55e',
     whisperx: '#f59e0b',
+    vibevoice: '#a78bfa',
 };
 const netHistory = { send_rate: [], recv_rate: [] };
-const connHistory = { voxtral: [], correction: [], whisperx: [] };
+const connHistory = { voxtral: [], correction: [], whisperx: [], vibevoice: [] };
 let networkChartInitialized = false;
 
 /* ───── CPU/GPU Chart State ───── */
@@ -184,21 +188,26 @@ function initChartLegend() {
     const legend = document.getElementById('memory-chart-legend');
     if (!legend || chartInitialized) return;
     chartInitialized = true;
-    const labels = { voxtral: 'Voxtral', correction: 'Correction LLM', whisperx: 'WhisperX' };
-    legend.innerHTML = Object.entries(CHART_COLORS).map(([key, c]) =>
-        `<span class="chart-legend-item"><span class="chart-legend-swatch" style="background:${c.line}"></span>${labels[key]}</span>`
-    ).join('');
+    const labels = { voxtral: 'Voxtral', correction: 'Correction LLM', whisperx: 'WhisperX', vibevoice: 'ForcedAligner' };
+    legend.innerHTML = `<span class="chart-legend-item"><span class="chart-legend-swatch" style="background:#e5e7eb"></span>Unified (Gesamt-RAM)</span>` +
+        Object.entries(CHART_COLORS).map(([key, c]) =>
+            `<span class="chart-legend-item"><span class="chart-legend-swatch" style="background:${c.line}"></span>${labels[key]}</span>`
+        ).join('');
 }
 
 function bytesToGiB(b) { return b / (1024 ** 3); }
 
-function pushMemorySample(containerMemory) {
+function pushMemorySample(containerMemory, systemMemory) {
     for (const key of Object.keys(memoryHistory)) {
         const bytes = containerMemory?.[key]?.used_bytes ?? 0;
         const arr = memoryHistory[key];
         arr.push(bytesToGiB(bytes));
         if (arr.length > CHART_MAX_POINTS) arr.shift();
     }
+    // Track total system RAM usage (includes GPU allocations on UMA)
+    const usedBytes = systemMemory?.used ?? 0;
+    unifiedMemHistory.push(bytesToGiB(usedBytes));
+    if (unifiedMemHistory.length > CHART_MAX_POINTS) unifiedMemHistory.shift();
 }
 
 function renderMemoryChart() {
@@ -252,8 +261,8 @@ function renderMemoryChart() {
     ctx.fillText('jetzt', padLeft + plotW - 24, H - 2);
 
     // Stacked area chart — draw bottom-to-top
-    // Stack order: whisperx (bottom), correction (middle), voxtral (top)
-    const stackOrder = ['whisperx', 'correction', 'voxtral'];
+    // Stack order: whisperx (bottom), vibevoice, correction, voxtral (top)
+    const stackOrder = ['whisperx', 'vibevoice', 'correction', 'voxtral'];
     const numPoints = Math.max(...stackOrder.map(k => memoryHistory[k].length), 2);
     const step = plotW / (CHART_MAX_POINTS - 1);
 
@@ -306,9 +315,32 @@ function renderMemoryChart() {
         ctx.stroke();
     }
 
+    // Unified memory line (total system RAM usage)
+    if (unifiedMemHistory.length > 1) {
+        const uStep = plotW / (CHART_MAX_POINTS - 1);
+        const uOffset = (CHART_MAX_POINTS - unifiedMemHistory.length) * uStep;
+        ctx.beginPath();
+        for (let i = 0; i < unifiedMemHistory.length; i++) {
+            const x = padLeft + uOffset + i * uStep;
+            const y = padTop + plotH - (unifiedMemHistory[i] / maxVal) * plotH;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
     // Current values + total overlay
-    const labels = { voxtral: 'Voxtral', correction: 'Correction', whisperx: 'WhisperX' };
+    const labels = { voxtral: 'Voxtral', correction: 'Correction', whisperx: 'WhisperX', vibevoice: 'VibeVoice' };
     let labelY = padTop + 16;
+    const unifiedCurrent = unifiedMemHistory.length > 0 ? unifiedMemHistory[unifiedMemHistory.length - 1] : 0;
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = 'bold 12px Inter, sans-serif';
+    ctx.fillText(`Unified: ${unifiedCurrent.toFixed(1)} / ${maxVal} GiB (${(unifiedCurrent/maxVal*100).toFixed(0)}%)`, padLeft + 8, labelY);
+    labelY += 18;
     let totalCurrent = 0;
     for (const key of stackOrder.slice().reverse()) {
         const arr = memoryHistory[key];
@@ -319,9 +351,6 @@ function renderMemoryChart() {
         ctx.fillText(`${labels[key]}: ${val.toFixed(1)} GiB`, padLeft + 8, labelY);
         labelY += 18;
     }
-    ctx.fillStyle = '#e5e7eb';
-    ctx.font = 'bold 12px Inter, sans-serif';
-    ctx.fillText(`Gesamt: ${totalCurrent.toFixed(1)} / ${maxVal} GiB (${(totalCurrent/maxVal*100).toFixed(0)}%)`, padLeft + 8, labelY);
 }
 
 /* ───── Network & Connections Rolling Chart ───── */
@@ -429,7 +458,7 @@ function renderNetworkChart() {
     ctx.fillText(`↑ ${formatRate(curSend)}`, padLeft + 110, padTop + 14);
 
     // ── Connections (bottom half) — bar-style line chart ──
-    const connKeys = ['voxtral', 'correction', 'whisperx'];
+    const connKeys = ['voxtral', 'correction', 'whisperx', 'vibevoice'];
     const allConns = connKeys.flatMap(k => connHistory[k]);
     const maxConn = Math.max(...allConns, 1) + 1;
 
@@ -450,7 +479,7 @@ function renderNetworkChart() {
     ctx.fillText('Verb.', 2, connTop + 4);
 
     // Draw connection lines
-    const connLabels = { voxtral: 'Voxtral', correction: 'Correction', whisperx: 'WhisperX' };
+    const connLabels = { voxtral: 'Voxtral', correction: 'Correction', whisperx: 'WhisperX', vibevoice: 'VibeVoice' };
     let connLabelX = padLeft + 8;
     for (const key of connKeys) {
         const arr = connHistory[key];
@@ -716,10 +745,10 @@ async function loadOverview() {
     renderGpus(data.metrics);
     renderServices(data.services);
     if (data.metrics.memory?.total) {
-        totalMemoryGiB = Math.min(110, Math.round(data.metrics.memory.total / (1024 ** 3)));
+        totalMemoryGiB = Math.round(data.metrics.memory.total / (1024 ** 3));
     }
     initChartLegend();
-    pushMemorySample(data.metrics.container_memory);
+    pushMemorySample(data.metrics.container_memory, data.metrics.memory);
     renderMemoryChart();
     initNetworkLegend();
     pushNetworkSample(data.metrics.network, data.metrics.service_connections);
@@ -858,7 +887,98 @@ saveRestartConfigButton?.addEventListener('click', async () => {
             } catch {
             }
         }, 10000);
+        initTerminal();
     } catch (error) {
         showToast(error.message, true);
     }
 })();
+
+/* ───── WebSocket Terminal (xterm.js) ───── */
+function initTerminal() {
+    const container = document.getElementById('xterm-container');
+    if (!container || typeof Terminal === 'undefined') return;
+
+    // Sync left panel height to right panel
+    function syncPanelHeights() {
+        const left = document.querySelector('.metrics-panel');
+        const right = document.querySelector('.services-panel');
+        if (left && right && window.innerWidth >= 1200) {
+            left.style.maxHeight = right.offsetHeight + 'px';
+        } else if (left) {
+            left.style.maxHeight = '';
+        }
+    }
+    syncPanelHeights();
+    window.addEventListener('resize', syncPanelHeights);
+    // Re-sync periodically as charts change height
+    setInterval(syncPanelHeights, 2000);
+
+    const term = new Terminal({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+        theme: {
+            background: '#0f172a',
+            foreground: '#e2e8f0',
+            cursor: '#38bdf8',
+            selectionBackground: 'rgba(56,189,248,0.3)',
+            black: '#1e293b', brightBlack: '#475569',
+            red: '#ef4444', brightRed: '#f87171',
+            green: '#22c55e', brightGreen: '#4ade80',
+            yellow: '#f59e0b', brightYellow: '#fbbf24',
+            blue: '#3b82f6', brightBlue: '#60a5fa',
+            magenta: '#a78bfa', brightMagenta: '#c4b5fd',
+            cyan: '#06b6d4', brightCyan: '#22d3ee',
+            white: '#e2e8f0', brightWhite: '#f8fafc',
+        },
+        scrollback: 5000,
+        convertEol: true,
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    if (typeof WebLinksAddon !== 'undefined') {
+        term.loadAddon(new WebLinksAddon.WebLinksAddon());
+    }
+
+    term.open(container);
+    fitAddon.fit();
+
+    let ws = null;
+
+    function connect() {
+        if (ws && ws.readyState <= 1) ws.close();
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${proto}//${location.host}/ws/terminal`);
+        ws.onopen = () => {
+            term.clear();
+            term.writeln('\x1b[32m\u25cf Verbunden\x1b[0m');
+            // Send initial resize
+            const dims = fitAddon.proposeDimensions();
+            if (dims) ws.send('\x01' + JSON.stringify({ rows: dims.rows, cols: dims.cols }));
+        };
+        ws.onmessage = (ev) => term.write(ev.data);
+        ws.onclose = () => term.writeln('\r\n\x1b[31m\u25cf Verbindung getrennt\x1b[0m');
+        ws.onerror = () => term.writeln('\r\n\x1b[31m\u25cf WebSocket Fehler\x1b[0m');
+    }
+
+    term.onData((data) => {
+        if (ws && ws.readyState === 1) ws.send(data);
+    });
+
+    // Handle window resize
+    const ro = new ResizeObserver(() => {
+        fitAddon.fit();
+        if (ws && ws.readyState === 1) {
+            const dims = fitAddon.proposeDimensions();
+            if (dims) ws.send('\x01' + JSON.stringify({ rows: dims.rows, cols: dims.cols }));
+        }
+    });
+    ro.observe(container);
+
+    // Reconnect button
+    const btn = document.getElementById('terminal-reconnect');
+    if (btn) btn.addEventListener('click', connect);
+
+    connect();
+}

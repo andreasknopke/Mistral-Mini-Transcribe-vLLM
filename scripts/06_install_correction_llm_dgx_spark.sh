@@ -7,24 +7,26 @@ APP_DIR="${STACK_HOME}/correction-llm-vllm"
 IMAGE_NAME="correction-llm-vllm:latest"
 SERVICE_NAME="correction-llm"
 BASE_IMAGE="${CORRECTION_LLM_VLLM_BASE_IMAGE:-nvcr.io/nvidia/vllm:26.03-py3}"
-CORRECTION_LLM_PROFILE="${CORRECTION_LLM_PROFILE:-spark-concurrent}"
-DEFAULT_MODEL="mistral-nemo-instruct-2407-awq"
-DEFAULT_GPU_MEMORY_UTILIZATION="0.18"
-DEFAULT_MAX_MODEL_LEN="4096"
+CORRECTION_LLM_PROFILE="${CORRECTION_LLM_PROFILE:-spark-shared}"
+DEFAULT_MODEL="mistral-small-24b-nvfp4"
+DEFAULT_GPU_MEMORY_UTILIZATION="0.50"
+DEFAULT_MAX_MODEL_LEN="8192"
 DEFAULT_MAX_NUM_SEQS="4"
-if [ "${CORRECTION_LLM_PROFILE}" = "exclusive-quality" ]; then
-  DEFAULT_MODEL="mistral-small-3.2-24b-instruct-2506-text-only-heretic"
-  DEFAULT_GPU_MEMORY_UTILIZATION="0.55"
-  DEFAULT_MAX_MODEL_LEN="8192"
-  DEFAULT_MAX_NUM_SEQS="1"
+DEFAULT_QUANTIZATION="compressed-tensors"
+DEFAULT_KV_CACHE_DTYPE="fp8"
+DEFAULT_DTYPE="auto"
+if [ "${CORRECTION_LLM_PROFILE}" = "exclusive" ]; then
+  DEFAULT_GPU_MEMORY_UTILIZATION="0.85"
+  DEFAULT_MAX_MODEL_LEN="32768"
+  DEFAULT_MAX_NUM_SEQS="8"
 fi
 REQUESTED_MODEL="${CORRECTION_LLM_MODEL:-${DEFAULT_MODEL}}"
 MODEL_ID="${REQUESTED_MODEL}"
-if [ "${REQUESTED_MODEL}" = "mistral-small-3.2-24b-instruct-2506-text-only-heretic" ]; then
-  MODEL_ID="grayarea/Mistral-Small-3.2-24B-Instruct-2506-Text-Only-Heretic-v1.2"
-fi
-if [ "${REQUESTED_MODEL}" = "mistral-nemo-instruct-2407-awq" ]; then
-  MODEL_ID="casperhansen/mistral-nemo-instruct-2407-awq"
+QUANTIZATION="${DEFAULT_QUANTIZATION}"
+KV_CACHE_DTYPE="${DEFAULT_KV_CACHE_DTYPE}"
+DTYPE="${DEFAULT_DTYPE}"
+if [ "${REQUESTED_MODEL}" = "mistral-small-24b-nvfp4" ]; then
+  MODEL_ID="llmat/Mistral-Small-24B-Instruct-2501-NVFP4"
 fi
 SERVED_MODEL_NAME="${CORRECTION_LLM_SERVED_NAME:-${REQUESTED_MODEL}}"
 HOST_PORT="${CORRECTION_LLM_PORT:-9000}"
@@ -147,10 +149,13 @@ exec /usr/bin/docker run --rm \
   --port 8000 \
   --served-model-name ${SERVED_MODEL_NAME} \
   --api-key ${API_KEY} \
-  --dtype half \
+  --quantization ${QUANTIZATION} \
+  --dtype ${DTYPE} \
+  --kv-cache-dtype ${KV_CACHE_DTYPE} \
   --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION} \
   --max-model-len ${MAX_MODEL_LEN} \
-  --max-num-seqs ${MAX_NUM_SEQS}
+  --max-num-seqs ${MAX_NUM_SEQS} \
+  --trust-remote-code
 EOF
 chmod +x "${APP_DIR}/run_llm.sh"
 
@@ -188,5 +193,5 @@ echo "Server starten:   sudo systemctl start ${SERVICE_NAME}"
 echo "Status anzeigen:  sudo systemctl status ${SERVICE_NAME} --no-pager -l"
 echo "Logs anzeigen:    journalctl -u ${SERVICE_NAME} -f"
 echo "Models API:       curl http://127.0.0.1:${HOST_PORT}/v1/models -H \"Authorization: Bearer ${API_KEY}\""
-echo "Hinweis: Default-Profil 'spark-concurrent' nutzt ein quantisiertes Mistral-Nemo-AWQ-Modell für gleichzeitige Online-Transkription plus Korrektur auf demselben Spark."
-echo "Für maximale Korrekturqualität exklusiv ohne Parallelbetrieb: CORRECTION_LLM_PROFILE=exclusive-quality"
+echo "Hinweis: Default-Profil 'spark-shared' nutzt Mistral-Small-24B NVFP4 (~15 GiB) mit 30% GPU-Speicher für parallelen Betrieb mit Voxtral."
+echo "Für exklusiven Betrieb mit maximalem Kontext: CORRECTION_LLM_PROFILE=exclusive"

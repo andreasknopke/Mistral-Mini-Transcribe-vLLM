@@ -161,6 +161,26 @@ def transcribe_audio(
         segments_json = json.dumps(segment_payload, ensure_ascii=False)
         save_transcription(Path(validated_file_path).stem, full_text, segments_json)
 
+        # Debug: save last response for comparison (disabled in production)
+        # Set WHISPERX_DEBUG=1 to enable
+        if os.getenv("WHISPERX_DEBUG", "0") == "1":
+            try:
+                import datetime
+                debug = {
+                    "saved_at": datetime.datetime.now().isoformat(),
+                    "response": {
+                        "text": full_text,
+                        "segments": segment_payload,
+                        "language": detected_lang,
+                        "mode": "speed" if speed_mode else "precision",
+                    }
+                }
+                with open("/tmp/last_whisperx_timestamps.json", "w") as f:
+                    json.dump(debug, f, ensure_ascii=False, indent=2)
+                print(f"Debug: saved last WhisperX response ({len(segment_payload)} segments)")
+            except Exception as dbg_exc:
+                print(f"Debug: failed to save WhisperX response: {dbg_exc}")
+
         elapsed = time.time() - start_time
         status = (
             f"{'Speed' if speed_mode else 'Präzisions'}-Modus fertig in {elapsed:.2f}s "

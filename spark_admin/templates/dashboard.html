@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Spark Admin</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 </head>
 <body>
     <header class="topbar">
         <div>
             <h1>Spark Admin Control Center</h1>
-            <p>WhisperX, Voxtral und Correction-LLM zentral verwalten.</p>
         </div>
         <div class="topbar-actions">
             <span>Angemeldet als <strong>{{ username }}</strong></span>
@@ -25,6 +25,13 @@
             <h2>Systemzustand</h2>
             <div id="system-summary" class="system-summary"></div>
             <div id="gpu-cards" class="gpu-grid"></div>
+            <div class="terminal-panel">
+                <div class="terminal-header">
+                    <h3>Terminal</h3>
+                    <button id="terminal-reconnect" title="Neu verbinden">⟳</button>
+                </div>
+                <div id="xterm-container"></div>
+            </div>
         </section>
 
         <section class="panel services-panel">
@@ -107,6 +114,9 @@
     </main>
 
     <script id="bootstrap-data" type="application/json">{{ {"services": services, "configs": configs} | tojson }}</script>
-    <script src="/static/app.js?v=20260418m"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+    <script src="/static/app.js?v=20260418o"></script>
 </body>
 </html>

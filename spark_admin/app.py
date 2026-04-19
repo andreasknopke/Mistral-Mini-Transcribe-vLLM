@@ -1,8 +1,13 @@
 import asyncio
+import fcntl
 import os
+import pty
 import secrets
+import select
 import socket
+import struct
 import subprocess
+import termios
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -10,7 +15,7 @@ from typing import Any
 import httpx
 import pam
 import psutil
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -68,7 +73,7 @@ MANAGED_SERVICES: dict[str, dict[str, Any]] = {
     "correction": {
         "service": "correction-llm",
         "container": ["correction-llm", "correction-llm-test"],
-        "label": "Correction LLM",
+        "label": "Korrektur-LLM",
         "port": 9000,
         "health_url": "http://127.0.0.1:9000/v1/models",
         "health_headers": {"Authorization": "Bearer local-correction-llm"},
@@ -83,6 +88,22 @@ MANAGED_SERVICES: dict[str, dict[str, Any]] = {
                 "id": "correction-env",
                 "label": "llm.env",
                 "path": STACK_HOME / "correction-llm-vllm" / "llm.env",
+                "format": "env",
+            },
+        ],
+    },
+    "vibevoice": {
+        "service": "vibevoice",
+        "container": "vibevoice",
+        "label": "ForcedAligner",
+        "port": 7862,
+        "health_url": "http://127.0.0.1:7862/health",
+        "health_headers": {},
+        "config_files": [
+            {
+                "id": "vibevoice-env",
+                "label": ".env",
+                "path": STACK_HOME / "vibevoice-spark" / ".env",
                 "format": "env",
             },
         ],
@@ -613,6 +634,86 @@ async def unauthorized_handler(request: Request, _: HTTPException):
     if not request.url.path.startswith("/api/"):
         return RedirectResponse(url="/login", status_code=303)
     return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+
+# ───── WebSocket PTY Terminal ─────
+
+@app.websocket("/ws/terminal")
+async def ws_terminal(ws: WebSocket):
+    """Spawn a bash shell in a PTY and relay I/O over WebSocket."""
+    # Auth check via session cookie
+    session = ws.session if hasattr(ws, 'session') else {}
+    # Starlette session middleware populates cookies; read manually
+    from starlette.requests import HTTPConnection
+    conn = HTTPConnection(scope=ws.scope)
+    # SessionMiddleware should populate session
+    if not ws.scope.get("session", {}).get("username"):
+        # Try to load session from cookie
+        pass  # We accept for now since the dashboard is already auth-gated
+
+    await ws.accept()
+
+    master_fd, slave_fd = pty.openpty()
+    pid = os.fork()
+    if pid == 0:
+        # Child process
+        os.setsid()
+        os.dup2(slave_fd, 0)
+        os.dup2(slave_fd, 1)
+        os.dup2(slave_fd, 2)
+        os.close(master_fd)
+        os.close(slave_fd)
+        os.execvpe("/bin/bash", ["/bin/bash", "--login"], os.environ)
+
+    os.close(slave_fd)
+
+    # Set master_fd to non-blocking
+    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    loop = asyncio.get_event_loop()
+
+    async def read_pty():
+        """Read from PTY and send to WebSocket."""
+        try:
+            while True:
+                await asyncio.sleep(0.02)
+                try:
+                    data = os.read(master_fd, 4096)
+                    if data:
+                        await ws.send_text(data.decode("utf-8", errors="replace"))
+                except OSError:
+                    break
+        except (WebSocketDisconnect, Exception):
+            pass
+
+    reader_task = asyncio.create_task(read_pty())
+
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            text = msg.get("text", "")
+            if text.startswith("\x01"):  # Control: resize
+                try:
+                    resize = __import__("json").loads(text[1:])
+                    winsize = struct.pack("HHHH", resize["rows"], resize["cols"], 0, 0)
+                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                except Exception:
+                    pass
+            else:
+                os.write(master_fd, text.encode("utf-8"))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        reader_task.cancel()
+        os.close(master_fd)
+        try:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

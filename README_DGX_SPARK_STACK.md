@@ -37,6 +37,7 @@ Dadurch landen auf dem Spark unter `~/voxtral-setup`:
 - `scripts/06_install_correction_llm_dgx_spark.sh`
 - `scripts/07_install_dgx_spark_ai_stack.sh`
 - `scripts/08_install_spark_admin_dgx_spark.sh`
+- `scripts/09_install_gemma4_dgx_spark.sh`
 - `spark_admin/`
 - `whisperx_spark/`
 
@@ -67,6 +68,7 @@ Alternativ als Sammelaufruf:
 | WhisperX | `7860` | Gradio-UI + API mit Timestamps |
 | Korrektur-LLM | `9000` | optionale OpenAI-kompatible Textkorrektur |
 | Spark Admin | `7000` | Web-UI für Betrieb, Logs und Konfiguration |
+| Gemma 4 MoE LLM | `9100` | optionales agentic MoE-Modell (NVFP4, ~16 GB) |
 
 ## Starten und prüfen
 
