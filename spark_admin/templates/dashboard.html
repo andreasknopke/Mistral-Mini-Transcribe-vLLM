@@ -24,6 +24,25 @@
         <section class="panel metrics-panel">
             <h2>Systemzustand</h2>
             <div id="system-summary" class="system-summary"></div>
+
+            <div class="password-card">
+                <div class="panel-header-inline">
+                    <div>
+                        <h3>Passwort für GRADIO Oberfläche (WhisperX und Mistral)</h3>
+                    </div>
+                </div>
+
+                <input id="shared-password" class="password-input" type="password" value="{{ password_config.value }}" autocomplete="current-password" aria-label="Passwort für GRADIO Oberfläche">
+
+                <div class="button-row compact-row">
+                    <button id="toggle-password" type="button">Anzeigen</button>
+                    <button id="reload-password" type="button">Neu laden</button>
+                    <button id="save-password" type="button">Speichern</button>
+                </div>
+
+                <div id="password-status" class="meta-line">Bereit.</div>
+            </div>
+
             <div id="gpu-cards" class="gpu-grid"></div>
             <div class="terminal-panel">
                 <div class="terminal-header">
@@ -80,6 +99,44 @@
         </section>
 
         <section class="panel config-panel">
+            <h2>Installations-Backup</h2>
+            <div class="backup-toolbar">
+                <label>Backup-Name (optional)
+                    <input id="backup-label" type="text" placeholder="z. B. vor-update-april">
+                </label>
+                <div class="button-row compact-row backup-actions">
+                    <button id="create-backup" type="button">Backup erstellen</button>
+                    <button id="refresh-backups" type="button">Liste aktualisieren</button>
+                </div>
+            </div>
+            <div class="backup-info-grid">
+                <div class="backup-info-card">
+                    <h3>Was gesichert wird</h3>
+                    <p>Aktuelle Stack-Dateien, Startskripte, Konfigurationen und Service-Snapshots der laufenden Installation.</p>
+                </div>
+                <div class="backup-info-card">
+                    <h3>Was ausgelassen wird</h3>
+                    <p>Temporäre Dateien, Caches, virtuelle Umgebungen, Git-Metadaten und vorhandene Backup-Archive.</p>
+                </div>
+            </div>
+            <div id="backup-job-panel" class="backup-job-panel hidden">
+                <div class="service-header">
+                    <div>
+                        <h3 id="backup-job-title">Backup-Job</h3>
+                        <div id="backup-job-message" class="backup-meta">Warte auf Status…</div>
+                    </div>
+                    <span id="backup-job-state" class="badge">queued</span>
+                </div>
+                <div class="backup-progress-track">
+                    <div id="backup-job-progress-bar" class="backup-progress-bar"></div>
+                </div>
+                <div id="backup-job-detail" class="backup-details"></div>
+            </div>
+            <div id="backup-status" class="meta-line">Noch keine Backup-Daten geladen.</div>
+            <div id="backup-list" class="backup-list"></div>
+        </section>
+
+        <section class="panel config-panel">
             <h2>Konfigurationen</h2>
             <div class="config-controls">
                 <label>Datei
@@ -117,6 +174,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
-    <script src="/static/app.js?v=20260418o"></script>
+    <script src="/static/app.js?v=20260421b"></script>
+    <script src="/static/password-editor.js?v=20260420b"></script>
 </body>
 </html>

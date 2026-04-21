@@ -162,6 +162,18 @@ body.login-page {
     font-size: 0.85rem;
 }
 
+.badge-good {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--good);
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.badge-danger {
+    background: rgba(239, 68, 68, 0.12);
+    color: #fecaca;
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
 .button-row,
 .config-controls {
     display: flex;
@@ -363,4 +375,162 @@ input {
 }
 #xterm-container .xterm {
     height: 100%;
+}
+
+.password-panel {
+    grid-column: span 12;
+    max-width: 760px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+.password-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.password-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+}
+
+.password-meta div {
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.9rem;
+}
+
+.password-meta span {
+    display: block;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+}
+
+.password-meta strong {
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+
+.password-label {
+    margin-top: 1rem;
+}
+
+.password-label input {
+    width: 100%;
+    min-width: 0;
+}
+
+.password-input {
+    width: 100%;
+    min-width: 0;
+    margin-top: 1rem;
+}
+
+.compact-row {
+    align-items: center;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.backup-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.backup-actions {
+    margin-top: 0;
+}
+
+.backup-info-grid,
+.backup-list {
+    display: grid;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.backup-info-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.backup-info-card,
+.backup-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1rem;
+}
+
+.backup-job-panel {
+    margin-top: 1rem;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1rem;
+}
+
+.backup-progress-track {
+    width: 100%;
+    height: 12px;
+    margin-top: 0.9rem;
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.backup-progress-bar {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #38bdf8, #22c55e);
+    transition: width 0.25s ease;
+}
+
+.backup-meta,
+.backup-details {
+    color: var(--muted);
+    font-size: 0.95rem;
+}
+
+.backup-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.backup-card-actions {
+    margin-top: 0;
+}
+
+.backup-sources {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.backup-sources strong {
+    display: block;
+    margin-bottom: 0.55rem;
+}
+
+.backup-sources ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--muted);
+}
+
+.backup-sources li + li {
+    margin-top: 0.35rem;
 }

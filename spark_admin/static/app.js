@@ -13,6 +13,28 @@ const configContent = document.getElementById('config-content');
 const reloadConfigButton = document.getElementById('reload-config');
 const saveConfigButton = document.getElementById('save-config');
 const saveRestartConfigButton = document.getElementById('save-restart-config');
+const backupLabelInput = document.getElementById('backup-label');
+const createBackupButton = document.getElementById('create-backup');
+const refreshBackupsButton = document.getElementById('refresh-backups');
+const backupStatus = document.getElementById('backup-status');
+const backupList = document.getElementById('backup-list');
+const backupJobPanel = document.getElementById('backup-job-panel');
+const backupJobTitle = document.getElementById('backup-job-title');
+const backupJobMessage = document.getElementById('backup-job-message');
+const backupJobState = document.getElementById('backup-job-state');
+const backupJobProgressBar = document.getElementById('backup-job-progress-bar');
+const backupJobDetail = document.getElementById('backup-job-detail');
+
+let backupState = {
+    backups: [],
+    backup_root: '',
+    included_paths: [],
+    excluded_directories: [],
+    excluded_patterns: [],
+    auto_restore_point: true,
+};
+let activeBackupJob = null;
+let activeBackupJobPoll = null;
 
 /* ───── Memory Chart State ───── */
 const CHART_COLORS = {
@@ -74,6 +96,139 @@ function showToast(message, isError = false) {
     node.style.borderColor = isError ? 'rgba(239,68,68,0.5)' : 'rgba(34,197,94,0.4)';
     document.body.appendChild(node);
     setTimeout(() => node.remove(), 2800);
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[char] || char));
+}
+
+function setBackupActionButtonsDisabled(disabled) {
+    if (createBackupButton) {
+        createBackupButton.disabled = disabled;
+    }
+    if (refreshBackupsButton) {
+        refreshBackupsButton.disabled = disabled;
+    }
+    backupList?.querySelectorAll('button').forEach((button) => {
+        if (button.dataset.downloadBackup) {
+            return;
+        }
+        button.disabled = disabled;
+    });
+}
+
+function renderBackupJob(job) {
+    activeBackupJob = job || null;
+    if (!backupJobPanel || !backupJobTitle || !backupJobMessage || !backupJobState || !backupJobProgressBar || !backupJobDetail) {
+        return;
+    }
+    if (!job) {
+        backupJobPanel.classList.add('hidden');
+        return;
+    }
+
+    backupJobPanel.classList.remove('hidden');
+    const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
+    backupJobTitle.textContent = job.type === 'restore' ? 'Restore-Job' : 'Backup-Job';
+    backupJobMessage.textContent = job.message || 'Job läuft…';
+    backupJobState.textContent = job.status || 'running';
+    backupJobProgressBar.style.width = `${progress}%`;
+    backupJobDetail.innerHTML = `
+        <span>Fortschritt: ${progress}%</span>
+        <span>Stand: ${escapeHtml(formatDateTime(job.updated_at))}</span>
+        ${job.detail ? `<span>${escapeHtml(job.detail)}</span>` : ''}
+        ${job.error ? `<span>${escapeHtml(job.error)}</span>` : ''}
+    `;
+
+    backupJobState.className = 'badge';
+    if (job.status === 'failed') {
+        backupJobState.classList.add('badge-danger');
+    } else if (job.status === 'completed') {
+        backupJobState.classList.add('badge-good');
+    }
+
+    const isRunning = job.status === 'queued' || job.status === 'running';
+    setBackupActionButtonsDisabled(isRunning);
+}
+
+async function pollBackupJob(jobId) {
+    if (activeBackupJobPoll) {
+        clearInterval(activeBackupJobPoll);
+        activeBackupJobPoll = null;
+    }
+
+    const refresh = async () => {
+        const job = await fetchJson(`/api/backups/jobs/${jobId}`);
+        renderBackupJob(job);
+        if (job.status === 'completed') {
+            if (job.result?.backups) {
+                renderBackups({ ...backupState, backups: job.result.backups });
+            }
+            const extra = job.result?.restore_point ? ` Vorher wurde ${job.result.restore_point.label} angelegt.` : '';
+            showToast((job.result?.message || job.message || 'Vorgang abgeschlossen.') + extra);
+            if (activeBackupJobPoll) {
+                clearInterval(activeBackupJobPoll);
+                activeBackupJobPoll = null;
+            }
+            await Promise.all([loadOverview(), loadConfig(), loadLogs(), loadBackups()]);
+            return;
+        }
+        if (job.status === 'failed') {
+            if (activeBackupJobPoll) {
+                clearInterval(activeBackupJobPoll);
+                activeBackupJobPoll = null;
+            }
+            showToast(job.error || job.detail || 'Backup-Job fehlgeschlagen.', true);
+            await loadBackups();
+        }
+    };
+
+    await refresh();
+    activeBackupJobPoll = window.setInterval(async () => {
+        try {
+            await refresh();
+        } catch (error) {
+            if (activeBackupJobPoll) {
+                clearInterval(activeBackupJobPoll);
+                activeBackupJobPoll = null;
+            }
+            renderBackupJob({
+                id: jobId,
+                type: activeBackupJob?.type || 'create',
+                status: 'failed',
+                progress: activeBackupJob?.progress || 0,
+                message: 'Statusabfrage fehlgeschlagen',
+                detail: error.message,
+                error: error.message,
+                updated_at: new Date().toISOString(),
+            });
+            showToast(error.message, true);
+        }
+    }, 1200);
+}
+
+function formatDateTime(value) {
+    if (!value) {
+        return 'n/a';
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return value;
+    }
+    return parsed.toLocaleString('de-DE', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    });
 }
 
 function fitCanvas(canvas) {
@@ -146,7 +301,6 @@ function statusClass(activeState, httpOk) {
 function renderSummary(metrics) {
     const memory = metrics.memory || {};
     const swap = metrics.swap || {};
-    const disks = metrics.disks || [];
     const uptimeHours = metrics.uptime_seconds ? (metrics.uptime_seconds / 3600).toFixed(1) : 'n/a';
 
     systemSummary.innerHTML = `
@@ -157,9 +311,6 @@ function renderSummary(metrics) {
             <div><span>RAM</span><br><strong>${formatBytes(memory.used)} / ${formatBytes(memory.total)}</strong></div>
             <div><span>Swap</span><br><strong>${formatBytes(swap.used)} / ${formatBytes(swap.total)}</strong></div>
             <div><span>Uptime</span><br><strong>${uptimeHours} h</strong></div>
-        </div>
-        <div class="kv">
-            ${disks.map((disk) => `<div><span>${disk.mountpoint}</span><br><strong>${formatBytes(disk.used)} / ${formatBytes(disk.total)}</strong><br>${formatPercent(disk.percent)}</div>`).join('')}
         </div>
     `;
 }
@@ -776,6 +927,123 @@ async function loadConfig() {
     configContent.value = data.content;
 }
 
+function renderBackups(data) {
+    backupState = {
+        ...backupState,
+        ...data,
+        backups: data.backups || backupState.backups,
+    };
+
+    if (!backupStatus || !backupList) {
+        return;
+    }
+
+    const backups = backupState.backups || [];
+    if (!backups.length) {
+        backupStatus.textContent = backupState.backup_root
+            ? `Noch keine Backups in ${backupState.backup_root}.`
+            : 'Noch keine Backups vorhanden.';
+        backupList.innerHTML = '';
+        return;
+    }
+
+    backupStatus.textContent = `${backups.length} Backup(s) in ${backupState.backup_root || 'System-Archiv'}. Restore legt${backupState.auto_restore_point ? ' automatisch ' : ' optional '}einen Sicherungspunkt an.`;
+    backupList.innerHTML = backups.map((backup) => {
+        const sourceItems = (backup.sources || []).slice(0, 4).map((source) => `
+            <li>${escapeHtml(source)}</li>
+        `).join('');
+        const extraCount = Math.max((backup.sources || []).length - 4, 0);
+        return `
+            <article class="backup-card">
+                <div class="service-header">
+                    <div>
+                        <h3>${escapeHtml(backup.label || backup.name)}</h3>
+                        <div class="backup-meta">${escapeHtml(formatDateTime(backup.created_at))} • ${escapeHtml(formatBytes(backup.size_bytes))} • ${escapeHtml(backup.reason || 'manual')}</div>
+                    </div>
+                    <div class="button-row backup-card-actions">
+                        <button type="button" data-download-backup="${escapeHtml(backup.name)}">Download</button>
+                        <button type="button" class="danger" data-delete-backup="${escapeHtml(backup.name)}">Löschen</button>
+                        <button type="button" class="danger" data-restore-backup="${escapeHtml(backup.name)}">Wiederherstellen</button>
+                    </div>
+                </div>
+                <div class="backup-details">
+                    <span>${escapeHtml(String(backup.source_count || (backup.sources || []).length))} Quelle(n)</span>
+                    <span>Datei: ${escapeHtml(backup.name)}</span>
+                </div>
+                ${(backup.sources || []).length ? `
+                    <div class="backup-sources">
+                        <strong>Enthaltene Pfade</strong>
+                        <ul>
+                            ${sourceItems}
+                            ${extraCount ? `<li>… plus ${extraCount} weitere</li>` : ''}
+                        </ul>
+                    </div>
+                ` : ''}
+            </article>
+        `;
+    }).join('');
+
+    if (activeBackupJob) {
+        renderBackupJob(activeBackupJob);
+    }
+}
+
+async function loadBackups() {
+    const data = await fetchJson('/api/backups');
+    renderBackups(data);
+}
+
+async function createBackup() {
+    if (backupStatus) {
+        backupStatus.textContent = 'Backup wird erstellt…';
+    }
+    const data = await fetchJson('/api/backups', {
+        method: 'POST',
+        body: JSON.stringify({ label: backupLabelInput?.value?.trim() || '' }),
+    });
+    if (backupLabelInput) {
+        backupLabelInput.value = '';
+    }
+    renderBackupJob(data.job);
+    await pollBackupJob(data.job.id);
+}
+
+async function restoreBackup(name) {
+    const backup = (backupState.backups || []).find((item) => item.name === name);
+    const label = backup?.label || name;
+    const confirmed = window.confirm(`Backup "${label}" wirklich wiederherstellen?\n\nDabei werden die gesicherten Installationspfade zurückkopiert und laufende Dienste kurz gestoppt.`);
+    if (!confirmed) {
+        return;
+    }
+
+    if (backupStatus) {
+        backupStatus.textContent = `Restore von ${label} läuft…`;
+    }
+    const data = await fetchJson('/api/backups/restore', {
+        method: 'POST',
+        body: JSON.stringify({
+            name,
+            restart_services: true,
+            create_restore_point: backupState.auto_restore_point,
+        }),
+    });
+    renderBackupJob(data.job);
+    await pollBackupJob(data.job.id);
+}
+
+async function deleteBackup(name) {
+    const backup = (backupState.backups || []).find((item) => item.name === name);
+    const label = backup?.label || name;
+    if (!window.confirm(`Backup "${label}" wirklich löschen?`)) {
+        return;
+    }
+    const data = await fetchJson(`/api/backups/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+    });
+    renderBackups({ ...backupState, backups: data.backups || [] });
+    showToast(data.message || 'Backup gelöscht.');
+}
+
 async function saveConfig(restartService) {
     const configId = configSelect.value;
     const body = {
@@ -878,9 +1146,50 @@ saveRestartConfigButton?.addEventListener('click', async () => {
     }
 });
 
+createBackupButton?.addEventListener('click', async () => {
+    try {
+        await createBackup();
+    } catch (error) {
+        showToast(error.message, true);
+    }
+});
+
+refreshBackupsButton?.addEventListener('click', async () => {
+    try {
+        if (backupStatus) {
+            backupStatus.textContent = 'Backup-Liste wird geladen…';
+        }
+        await loadBackups();
+    } catch (error) {
+        showToast(error.message, true);
+    }
+});
+
+backupList?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-restore-backup], [data-delete-backup], [data-download-backup]');
+    if (!button) {
+        return;
+    }
+    try {
+        if (button.dataset.restoreBackup) {
+            await restoreBackup(button.dataset.restoreBackup);
+            return;
+        }
+        if (button.dataset.deleteBackup) {
+            await deleteBackup(button.dataset.deleteBackup);
+            return;
+        }
+        if (button.dataset.downloadBackup) {
+            window.open(`/api/backups/${encodeURIComponent(button.dataset.downloadBackup)}/download`, '_blank', 'noopener');
+        }
+    } catch (error) {
+        showToast(error.message, true);
+    }
+});
+
 (async function init() {
     try {
-        await Promise.all([loadOverview(), loadConfig(), loadLogs()]);
+        await Promise.all([loadOverview(), loadConfig(), loadLogs(), loadBackups()]);
         setInterval(async () => {
             try {
                 await loadOverview();

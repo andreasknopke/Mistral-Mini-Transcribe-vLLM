@@ -49,7 +49,7 @@ staging = f"{HOME}/voxtral-setup/spark_admin"
 local_base = os.path.join(os.path.dirname(__file__), "spark_admin")
 for sub in ["app.py", "requirements.txt",
             "templates/dashboard.html", "templates/login.html",
-            "static/app.js", "static/style.css"]:
+            "static/app.js", "static/password-editor.js", "static/style.css"]:
     local = os.path.join(local_base, sub)
     if os.path.exists(local):
         sftp.put(local, f"{staging}/{sub}")

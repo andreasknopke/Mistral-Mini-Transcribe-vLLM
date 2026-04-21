@@ -16,7 +16,7 @@ pwd = os.environ["GAITA_PWD"]
 ADMIN_FILES = [
     "app.py", "requirements.txt",
     "templates/dashboard.html", "templates/login.html",
-    "static/app.js", "static/style.css",
+    "static/app.js", "static/password-editor.js", "static/style.css",
 ]
 
 # 1) Upload
