@@ -12,7 +12,6 @@ $voxtralCompatProxy = Join-Path $repoRoot "voxtral_vllm_proxy.py"
 $installScript = Join-Path $PSScriptRoot "03_install_voxtral_dgx_spark.sh"
 $containerScript = Join-Path $PSScriptRoot "04_install_voxtral_dgx_spark_container.sh"
 $whisperxInstallScript = Join-Path $PSScriptRoot "05_install_whisperx_dgx_spark.sh"
-$correctionLlmInstallScript = Join-Path $PSScriptRoot "06_install_correction_llm_dgx_spark.sh"
 $stackInstallScript = Join-Path $PSScriptRoot "07_install_dgx_spark_ai_stack.sh"
 $sparkAdminInstallScript = Join-Path $PSScriptRoot "08_install_spark_admin_dgx_spark.sh"
 $gemma4InstallScript = Join-Path $PSScriptRoot "09_install_gemma4_dgx_spark.sh"
@@ -32,7 +31,6 @@ scp $voxtralCompatProxy ($targetDisplay + "/voxtral_vllm_proxy.py")
 scp $installScript ($targetDisplay + "/03_install_voxtral_dgx_spark.sh")
 scp $containerScript ($targetDisplay + "/04_install_voxtral_dgx_spark_container.sh")
 scp $whisperxInstallScript ($targetDisplay + "/05_install_whisperx_dgx_spark.sh")
-scp $correctionLlmInstallScript ($targetDisplay + "/06_install_correction_llm_dgx_spark.sh")
 scp $stackInstallScript ($targetDisplay + "/07_install_dgx_spark_ai_stack.sh")
 scp $sparkAdminInstallScript ($targetDisplay + "/08_install_spark_admin_dgx_spark.sh")
 scp $gemma4InstallScript ($targetDisplay + "/09_install_gemma4_dgx_spark.sh")

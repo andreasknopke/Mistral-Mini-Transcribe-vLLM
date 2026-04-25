@@ -19,8 +19,8 @@ echo "[2/4] WhisperX installieren"
 ./05_install_whisperx_dgx_spark.sh
 
 if [ "${INSTALL_CORRECTION_LLM:-0}" = "1" ]; then
-	echo "[3/4] Korrektur-LLM installieren"
-	./06_install_correction_llm_dgx_spark.sh
+	echo "[3/4] Korrektur-LLM (Gemma 4) installieren"
+	./09_install_gemma4_dgx_spark.sh
 else
 	echo "[3/4] Korrektur-LLM übersprungen (INSTALL_CORRECTION_LLM!=1)"
 fi
