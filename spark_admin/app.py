@@ -120,12 +120,12 @@ MANAGED_SERVICES: dict[str, dict[str, Any]] = {
         "label": "Korrektur-LLM",
         "port": 9000,
         "health_url": "http://127.0.0.1:9000/v1/models",
-        "health_headers": {"Authorization": "Bearer local-correction-llm"},
+        "health_headers": {},
         "config_files": [
             {
                 "id": "correction-run",
-                "label": "run_llm.sh",
-                "path": STACK_HOME / "correction-llm-vllm" / "run_llm.sh",
+                "label": "run_gemma4.sh",
+                "path": STACK_HOME / "correction-llm-vllm" / "run_gemma4.sh",
                 "format": "shell",
             },
             {
