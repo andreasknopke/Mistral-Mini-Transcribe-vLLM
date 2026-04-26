@@ -34,7 +34,12 @@ GPU_MEMORY_UTILIZATION="${CORRECTION_LLM_GPU_MEMORY_UTILIZATION:-${DEFAULT_GPU_M
 MAX_MODEL_LEN="${CORRECTION_LLM_MAX_MODEL_LEN:-${DEFAULT_MAX_MODEL_LEN}}"
 MAX_NUM_SEQS="${CORRECTION_LLM_MAX_NUM_SEQS:-${DEFAULT_MAX_NUM_SEQS}}"
 FORCE_REBUILD="${CORRECTION_LLM_FORCE_REBUILD:-0}"
-API_KEY="${CORRECTION_LLM_API_KEY:-local-correction-llm}"
+API_KEY="${CORRECTION_LLM_API_KEY:-}"
+if [ -n "${API_KEY}" ]; then
+  API_KEY_FLAG="--api-key ${API_KEY}"
+else
+  API_KEY_FLAG=""
+fi
 
 run_sudo() {
   if [ -n "${SUDO_PASSWORD:-}" ]; then
@@ -106,13 +111,49 @@ fi
 mkdir -p "${APP_DIR}"
 mkdir -p "${STACK_HOME}/.cache/huggingface"
 
+cat > "${APP_DIR}/sitecustomize.py" <<'EOF'
+import os
+
+
+def _should_fix(pretrained_model_name_or_path):
+  if os.environ.get("FIX_MISTRAL_REGEX", "1") != "1":
+    return False
+  model_name = str(pretrained_model_name_or_path).lower()
+  return "mistral" in model_name or "qwen" in model_name
+
+
+def _patch_loader(auto_cls):
+  original = auto_cls.from_pretrained
+
+  def wrapped(pretrained_model_name_or_path, *args, **kwargs):
+    if (
+      _should_fix(pretrained_model_name_or_path)
+      and "fix_mistral_regex" not in kwargs
+    ):
+      kwargs["fix_mistral_regex"] = True
+    return original(pretrained_model_name_or_path, *args, **kwargs)
+
+  auto_cls.from_pretrained = wrapped
+
+
+try:
+  from transformers import AutoProcessor, AutoTokenizer
+
+  _patch_loader(AutoTokenizer)
+  _patch_loader(AutoProcessor)
+except Exception:
+  pass
+EOF
+
 cat > "${APP_DIR}/Dockerfile" <<'EOF'
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ENV PIP_NO_CACHE_DIR=1
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV PYTHONPATH=/opt/correction-llm-patches${PYTHONPATH:+:${PYTHONPATH}}
 RUN python -m pip install --upgrade pip "setuptools<82" && \
   python -m pip install "huggingface_hub[hf_transfer]"
+COPY sitecustomize.py /opt/correction-llm-patches/sitecustomize.py
 EXPOSE 8000
 EOF
 
@@ -128,6 +169,7 @@ HF_TOKEN=${HF_TOKEN}
 HF_HOME=/root/.cache/huggingface
 HF_HUB_ENABLE_HF_TRANSFER=1
 VLLM_WORKER_MULTIPROC_METHOD=spawn
+FIX_MISTRAL_REGEX=1
 EOF
 
 cat > "${APP_DIR}/run_llm.sh" <<EOF
@@ -143,18 +185,21 @@ exec /usr/bin/docker run --rm \
   --env-file ${APP_DIR}/llm.env \
   -p ${HOST_PORT}:8000 \
   -v ${STACK_HOME}/.cache/huggingface:/root/.cache/huggingface \
+  -v ${APP_DIR}/sitecustomize.py:/opt/correction-llm-patches/sitecustomize.py:ro \
   ${IMAGE_NAME} \
   vllm serve ${MODEL_ID} \
   --host 0.0.0.0 \
   --port 8000 \
   --served-model-name ${SERVED_MODEL_NAME} \
-  --api-key ${API_KEY} \
+  ${API_KEY_FLAG} \
   --quantization ${QUANTIZATION} \
   --dtype ${DTYPE} \
   --kv-cache-dtype ${KV_CACHE_DTYPE} \
   --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION} \
   --max-model-len ${MAX_MODEL_LEN} \
   --max-num-seqs ${MAX_NUM_SEQS} \
+  --tokenizer-mode hf \
+  --chat-template-content-format string \
   --trust-remote-code
 EOF
 chmod +x "${APP_DIR}/run_llm.sh"
@@ -192,6 +237,10 @@ echo ""
 echo "Server starten:   sudo systemctl start ${SERVICE_NAME}"
 echo "Status anzeigen:  sudo systemctl status ${SERVICE_NAME} --no-pager -l"
 echo "Logs anzeigen:    journalctl -u ${SERVICE_NAME} -f"
-echo "Models API:       curl http://127.0.0.1:${HOST_PORT}/v1/models -H \"Authorization: Bearer ${API_KEY}\""
+if [ -n "${API_KEY}" ]; then
+  echo "Models API:       curl http://127.0.0.1:${HOST_PORT}/v1/models -H \"Authorization: Bearer ${API_KEY}\""
+else
+  echo "Models API:       curl http://127.0.0.1:${HOST_PORT}/v1/models"
+fi
 echo "Hinweis: Default-Profil 'spark-shared' nutzt Mistral-Small-24B NVFP4 (~15 GiB) mit 30% GPU-Speicher für parallelen Betrieb mit Voxtral."
 echo "Für exklusiven Betrieb mit maximalem Kontext: CORRECTION_LLM_PROFILE=exclusive"

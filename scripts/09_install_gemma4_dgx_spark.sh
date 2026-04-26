@@ -50,6 +50,27 @@ fi
 GPU_MEMORY_UTILIZATION="${GEMMA4_GPU_MEMORY_UTILIZATION:-${DEFAULT_GPU_MEMORY_UTILIZATION}}"
 MAX_MODEL_LEN="${GEMMA4_MAX_MODEL_LEN:-${DEFAULT_MAX_MODEL_LEN}}"
 MAX_NUM_SEQS="${GEMMA4_MAX_NUM_SEQS:-${DEFAULT_MAX_NUM_SEQS}}"
+ENABLE_AUTO_TOOL_CHOICE="${GEMMA4_ENABLE_AUTO_TOOL_CHOICE:-1}"
+TOOL_CALL_PARSER="${GEMMA4_TOOL_CALL_PARSER:-gemma4}"
+CHAT_TEMPLATE="${GEMMA4_CHAT_TEMPLATE:-}"
+
+if [ "${ENABLE_AUTO_TOOL_CHOICE}" != "0" ] && [ -z "${TOOL_CALL_PARSER}" ]; then
+  echo "FEHLER: GEMMA4_TOOL_CALL_PARSER darf nicht leer sein, wenn Auto-Tool-Choice aktiv ist."
+  exit 1
+fi
+
+AUTO_TOOL_CHOICE_LINE=""
+TOOL_CALL_PARSER_LINE=""
+CHAT_TEMPLATE_LINE=""
+
+if [ "${ENABLE_AUTO_TOOL_CHOICE}" != "0" ]; then
+  AUTO_TOOL_CHOICE_LINE="  --enable-auto-tool-choice \\"
+  TOOL_CALL_PARSER_LINE="  --tool-call-parser ${TOOL_CALL_PARSER} \\"
+fi
+
+if [ -n "${CHAT_TEMPLATE}" ]; then
+  CHAT_TEMPLATE_LINE="  --chat-template ${CHAT_TEMPLATE} \\"
+fi
 
 run_sudo() {
   if [ -n "${SUDO_PASSWORD:-}" ]; then
@@ -69,6 +90,7 @@ echo "Port:                   ${HOST_PORT}"
 echo "Max parallele Seqs:     ${MAX_NUM_SEQS}"
 echo "Max Context Len:        ${MAX_MODEL_LEN}"
 echo "GPU Memory Utilization: ${GPU_MEMORY_UTILIZATION}"
+echo "Auto Tool Choice:       $([ "${ENABLE_AUTO_TOOL_CHOICE}" != "0" ] && echo "an (${TOOL_CALL_PARSER})" || echo "aus")"
 echo "Image Tag:              ${IMAGE_TAG}"
 echo ""
 
@@ -217,7 +239,10 @@ ${PATCH_MOUNT_LINE}
   --max-num-seqs ${MAX_NUM_SEQS} \\
   --max-num-batched-tokens 8192 \\
   --moe-backend marlin \\
+${AUTO_TOOL_CHOICE_LINE}
+${TOOL_CALL_PARSER_LINE}
   --tokenizer-mode hf \\
+${CHAT_TEMPLATE_LINE}
   --chat-template-content-format string \\
   --trust-remote-code
 EOF
@@ -264,6 +289,7 @@ echo "Image:           ${IMAGE_TAG}"
 echo "Patch gemounted: $([ -n "${PATCH_FILE}" ] && echo "ja → ${PATCH_FILE}" || echo "NEIN")"
 echo "Profil:          ${GEMMA4_PROFILE}"
 echo "Port:            ${HOST_PORT}"
+echo "Tool-Calling:    $([ "${ENABLE_AUTO_TOOL_CHOICE}" != "0" ] && echo "auto (${TOOL_CALL_PARSER})" || echo "deaktiviert")"
 echo ""
 echo "Starten:   sudo systemctl start ${SERVICE_NAME}"
 echo "Status:    sudo systemctl status ${SERVICE_NAME} --no-pager -l"

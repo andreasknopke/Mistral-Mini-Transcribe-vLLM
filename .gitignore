@@ -4,3 +4,7 @@ __pycache__/
 .vscode/
 tests/audio_test.mp3
 tests/whisperx_config.json
+_admin_check.txt
+_gemma4*.txt
+_moe_original.py
+scripts/*.broken_v1
