@@ -20,6 +20,93 @@ Dieses Setup ergänzt den bestehenden Voxtral-Pfad um zwei weitere Dienste auf d
 - Offline-/Batch-Transkription: `whisperx` sequentiell, idealerweise ohne gleichzeitig laufendes großes Korrekturmodell
 - Das Default-Setup ist deshalb auf einen gemeinsamen Betrieb von Voxtral plus Korrekturmodell optimiert, nicht auf maximale Größe jedes einzelnen Dienstes.
 
+### Benchmark-Fazit für kurzen VAD-Chunk-Online-Modus
+
+Für den hier genutzten Echtbetrieb mit kurzen, bereits per VAD segmentierten Sätzen bleibt `voxtral-vllm` klar der bessere Primärdienst.
+Die Messung wurde mit kurzer MP3-Testdatei (`audio_test.mp3`) und 30 Sekunden Lastdauer pro Stufe auf dem DGX Spark durchgeführt.
+
+| Nutzer | Voxtral Ø Latenz | Voxtral Throughput | WhisperX Ø Latenz | WhisperX Throughput |
+|---:|---:|---:|---:|---:|
+| 1 | `0.31s` | `2.48 r/s` | `0.48s` | `1.70 r/s` |
+| 2 | `0.34s` | `4.75 r/s` | `0.76s` | `2.23 r/s` |
+| 3 | `0.33s` | `7.18 r/s` | `1.13s` | `2.28 r/s` |
+| 4 | `0.33s` | `9.74 r/s` | `1.52s` | `2.28 r/s` |
+| 5 | `0.33s` | `11.92 r/s` | `1.94s` | `2.30 r/s` |
+| 6 | `0.34s` | `14.07 r/s` | `2.24s` | `2.38 r/s` |
+
+Interpretation:
+
+- `voxtral-vllm` hält die Latenz auch bei `6` parallelen Nutzern praktisch stabil bei rund `0.33–0.34s`.
+- `whisperx` skaliert im selben Test deutlich schlechter und steigt von `0.48s` auf `2.24s`.
+- Die GPU-Auslastung lag bei Voxtral stabil bei ca. `92%`, bei WhisperX je nach Stufe nur bei ca. `38–62%`.
+- Für kurze Online-Chunks ist damit nicht die reine Modellgröße entscheidend, sondern wie gut der Dienst viele kleine Requests parallel abarbeitet.
+
+Praxisempfehlung:
+
+- `voxtral-vllm` als Primärpfad für Online-/Realtime-nahe VAD-Chunks
+- `whisperx` ergänzend für Alignment, Wort-Timestamps oder Offline-Nachbearbeitung
+
+### Empfohlene Betriebsstrategie
+
+Für den produktiven Betrieb auf dem DGX Spark empfiehlt sich folgende einfache Aufteilung:
+
+- **Online, kurzer VAD-Chunk, schnelle Reaktion wichtig** → `voxtral-vllm`
+- **Online, kurzer Chunk plus nachgelagerte Textkorrektur** → `voxtral-vllm` + `correction-llm`
+- **Offline-Transkription mit Wort-/Segment-Timestamps** → `whisperx`
+- **Offline-Qualitätssicherung oder Text-Review nach STT** → `voxtral-vllm` oder `whisperx` + `correction-llm`
+
+Konkrete Routing-Regeln:
+
+1. Alles, was schon per VAD in kurze Sätze oder sehr kurze Sprachsegmente zerlegt wurde, zuerst an `voxtral-vllm` schicken.
+2. `whisperx` nur dann im Primärpfad verwenden, wenn Timestamps oder Alignment fachlich wirklich benötigt werden.
+3. Bei hoher Parallelität zuerst Voxtral skalieren, nicht WhisperX.
+4. WhisperX bevorzugt als separaten Offline- oder Nachbearbeitungs-Job laufen lassen.
+
+### Architekturdiagramm
+
+```text
+			  +----------------------+
+			  |   Mikrofon / Audio   |
+			  +----------+-----------+
+					 |
+					 v
+			  +----------------------+
+			  |     VAD Chunking     |
+			  +-----+-----------+----+
+				  |           |
+	    Online / kurze Chunks       | Offline / Alignment / Timestamps
+				  |           |
+				  v           v
+		  +----------------+   +----------------+
+		  |  voxtral-vllm  |   |    whisperx    |
+		  |   Port 8000    |   |   Port 7860    |
+		  +--------+-------+   +--------+-------+
+			     |                    |
+			     | optional           | optional
+			     v                    v
+		    +-------------------------------+
+		    |       correction-llm          |
+		    |          Port 9000            |
+		    +---------------+---------------+
+					  |
+					  v
+			  +----------------------+
+			  | Text / UI / Workflow |
+			  +----------------------+
+```
+
+```mermaid
+flowchart TD
+	A[Mikrofon / Audio] --> B[VAD Chunking]
+	B -->|Online / kurze Chunks| C[voxtral-vllm<br/>Port 8000]
+	B -->|Offline / Alignment / Timestamps| D[whisperx<br/>Port 7860]
+	C -->|optional| E[correction-llm<br/>Port 9000]
+	D -->|optional| E
+	E --> F[Text / UI / Workflow]
+	C --> F
+	D --> F
+```
+
 ## Deployment
 
 Vom Windows-Rechner aus:

@@ -79,6 +79,83 @@ bash /mnt/d/GitHub/Mistral/HTML/scripts/test_voxtral.sh
 Wenn bis zu ~10 Nutzer parallel verarbeitet werden sollen, ist auf dem DGX Spark **vLLM** der empfohlene Pfad.
 Der direkte `transformers`-Server in `voxtral_server.py` bleibt als einfacher Fallback für Einzelbetrieb oder Debugging erhalten.
 
+### Benchmark-Ergebnis für kurzen Satz-/VAD-Chunk-Betrieb
+
+Für den realen Einsatz mit kurzen VAD-Chunks (typisch ein kurzer Satz, keine langen Audiodateien) wurde `mistralai/Voxtral-Mini-3B-2507` direkt gegen `WhisperX large-v3` verglichen.
+Das Ergebnis spricht in diesem Modus klar für Voxtral.
+
+| Nutzer | Voxtral Ø Latenz | Voxtral Throughput | Voxtral GPU | WhisperX Ø Latenz | WhisperX Throughput | WhisperX GPU |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | `0.31s` | `2.48 r/s` | `78.7%` | `0.48s` | `1.70 r/s` | `38.3%` |
+| 2 | `0.34s` | `4.75 r/s` | `92.4%` | `0.76s` | `2.23 r/s` | `51.3%` |
+| 3 | `0.33s` | `7.18 r/s` | `92.3%` | `1.13s` | `2.28 r/s` | `54.2%` |
+| 4 | `0.33s` | `9.74 r/s` | `92.4%` | `1.52s` | `2.28 r/s` | `53.0%` |
+| 5 | `0.33s` | `11.92 r/s` | `92.4%` | `1.94s` | `2.30 r/s` | `52.4%` |
+| 6 | `0.34s` | `14.07 r/s` | `92.4%` | `2.24s` | `2.38 r/s` | `62.4%` |
+
+Fazit aus dem Test:
+
+- Voxtral bleibt bis `6` parallele Nutzer nahezu latenzstabil.
+- WhisperX verliert unter Parallelität deutlich schneller an Reaktionszeit.
+- Für kurze Online-Chunks ist `Voxtral-Mini-3B-2507` auf dem Spark klar besser geeignet als `WhisperX large-v3`.
+- WhisperX bleibt sinnvoll, wenn segmentgenaue Timestamps oder ein nachgelagerter Offline-Lauf wichtiger sind als maximale Parallelität.
+
+### Empfohlene Routing-Regeln
+
+Für den praktischen Einsatz mit VAD-Chunks kann die Entscheidung sehr einfach gehalten werden:
+
+- **Kurzer Satz / kurzer VAD-Chunk / Online-Modus** → `Voxtral-Mini-3B-2507`
+- **Kurzer Chunk + optionale Textkorrektur** → `Voxtral-Mini-3B-2507` + Korrektur-LLM
+- **Wortgenaue Timestamps / Segment-Alignment** → `WhisperX`
+- **Längere Offline-Dateien mit nachträglicher Analyse** → `WhisperX`, optional danach Korrektur-LLM
+
+Damit gilt für diesen Stack:
+
+- Voxtral ist der Standardpfad für die eigentliche Online-Erkennung.
+- WhisperX ist der Spezialpfad für Alignment und Offline-Nachbearbeitung.
+
+### Architekturdiagramm für den Online-Pfad
+
+```text
+Mikrofon / Stream
+	  |
+	  v
+  VAD Chunking
+	  |
+	  v
++-------------------------+
+| Voxtral-Mini-3B-2507    |
+| voxtral-vllm / Port 8000|
++------------+------------+
+		   |
+		   | optional
+		   v
++-------------------------+
+| correction-llm          |
+| Gemma 4 / Port 9000     |
++------------+------------+
+		   |
+		   v
+	UI / App / Ausgabe
+
+Spezialfall statt Voxtral:
+  Alignment / Wort-Timestamps / Offline-Datei
+			   |
+			   v
+	   WhisperX / Port 7860
+```
+
+```mermaid
+flowchart TD
+	A[Mikrofon / Stream] --> B[VAD Chunking]
+	B --> C[Voxtral-Mini-3B-2507<br/>voxtral-vllm / Port 8000]
+	C -->|optional| D[correction-llm<br/>Gemma 4 / Port 9000]
+	C --> E[UI / App / Ausgabe]
+	D --> E
+	B -. Spezialfall: Alignment / Wort-Timestamps / Offline-Datei .-> F[WhisperX / Port 7860]
+	F --> E
+```
+
 ### Produktionspfad: DGX Spark mit vLLM
 
 Diese Variante nutzt einen Docker-Container mit `vllm serve` und ist auf parallele Requests ausgelegt.

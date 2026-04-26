@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .env.local
 .vscode/
+tests/audio_test.mp3
+tests/whisperx_config.json
