@@ -485,7 +485,7 @@ function renderMemoryChart() {
     }
 
     // Current values + total overlay
-    const labels = { voxtral: 'Voxtral', correction: 'Correction', whisperx: 'WhisperX', vibevoice: 'VibeVoice' };
+    const labels = { voxtral: 'Voxtral', correction: 'Correction', whisperx: 'WhisperX', vibevoice: 'ForcedAligner' };
     let labelY = padTop + 16;
     const unifiedCurrent = unifiedMemHistory.length > 0 ? unifiedMemHistory[unifiedMemHistory.length - 1] : 0;
     ctx.fillStyle = '#e5e7eb';
@@ -630,7 +630,7 @@ function renderNetworkChart() {
     ctx.fillText('Verb.', 2, connTop + 4);
 
     // Draw connection lines
-    const connLabels = { voxtral: 'Voxtral', correction: 'Correction', whisperx: 'WhisperX', vibevoice: 'VibeVoice' };
+    const connLabels = { voxtral: 'Voxtral', correction: 'Correction', whisperx: 'WhisperX', vibevoice: 'ForcedAligner' };
     let connLabelX = padLeft + 8;
     for (const key of connKeys) {
         const arr = connHistory[key];
@@ -1290,4 +1290,42 @@ function initTerminal() {
     if (btn) btn.addEventListener('click', connect);
 
     connect();
+}
+
+/* ───── Spark System Controls ───── */
+const sparkRestartBtn = document.getElementById('spark-restart-btn');
+const sparkShutdownBtn = document.getElementById('spark-shutdown-btn');
+
+if (sparkRestartBtn) {
+    sparkRestartBtn.addEventListener('click', async () => {
+        if (!confirm('Möchten Sie das Spark System wirklich neustarten?')) return;
+        try {
+            const res = await fetch('/api/spark/restart', { method: 'POST' });
+            if (res.ok) {
+                showToast('Spark System wird neugestartet...');
+            } else {
+                const data = await res.json().catch(() => ({}));
+                showToast(data.detail || 'Fehler beim Neustart', true);
+            }
+        } catch (e) {
+            showToast('Netzwerkfehler beim Neustart', true);
+        }
+    });
+}
+
+if (sparkShutdownBtn) {
+    sparkShutdownBtn.addEventListener('click', async () => {
+        if (!confirm('Möchten Sie das Spark System wirklich herunterfahren?')) return;
+        try {
+            const res = await fetch('/api/spark/shutdown', { method: 'POST' });
+            if (res.ok) {
+                showToast('Spark System wird heruntergefahren...');
+            } else {
+                const data = await res.json().catch(() => ({}));
+                showToast(data.detail || 'Fehler beim Herunterfahren', true);
+            }
+        } catch (e) {
+            showToast('Netzwerkfehler beim Herunterfahren', true);
+        }
+    });
 }

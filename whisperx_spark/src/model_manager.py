@@ -65,7 +65,10 @@ MODELS = [
     "large-v3",
     "guillaumekln/faster-whisper-large-v2",
     "large-v2",
+    "/home/ksai0001_local/models/primeline-turbo-de-int8_bf16",
     "cstr/whisper-large-v3-turbo-german-int8_float32",
+    "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "primeline/whisper-large-v3-turbo-german",
 ]
 
 DEFAULT_POOL_SIZE = int(os.getenv("WHISPERX_POOL_SIZE", "2"))
@@ -88,6 +91,37 @@ class ModelWorker:
         self.jobs_completed = 0
         self._load_model()
 
+    def _build_load_kwargs(self, device: str, compute_type: str) -> dict:
+        """Baut load_model-kwargs. Optional Flash-Attn / Beam-Size aus ENV.
+
+        Alle neuen Optionen sind opt-in und werden nur dann gesetzt, wenn die
+        entsprechenden ENV-Variablen aktiv sind. So bleibt der Default exakt
+        identisch zum bisherigen Verhalten und ein Rollback ist trivial.
+        """
+        kwargs: dict = {
+            "device": device,
+            "compute_type": compute_type,
+        }
+        threads = os.getenv("WHISPERX_CPU_THREADS")
+        if threads:
+            try:
+                kwargs["threads"] = int(threads)
+            except ValueError:
+                pass
+
+        asr_options: dict = {}
+        if os.getenv("WHISPERX_FLASH_ATTENTION", "0") == "1":
+            asr_options["flash_attention"] = True
+        beam_env = os.getenv("WHISPERX_BEAM_SIZE")
+        if beam_env:
+            try:
+                asr_options["beam_size"] = int(beam_env)
+            except ValueError:
+                pass
+        if asr_options:
+            kwargs["asr_options"] = asr_options
+        return kwargs
+
     def _load_model(self) -> None:
         requested_device = self.device
         if requested_device == "cuda":
@@ -95,16 +129,30 @@ class ModelWorker:
         else:
             compute_type = os.getenv("WHISPERX_CPU_COMPUTE_TYPE", "int8")
 
+        load_kwargs = self._build_load_kwargs(requested_device, compute_type)
+        extra = {k: v for k, v in load_kwargs.items() if k not in {"device", "compute_type"}}
+        extra_log = f" extras={extra}" if extra else ""
         print(
             f"--- POOL: Worker {self.worker_id} lädt Modell "
-            f"'{self.model_name}' auf '{requested_device}' (compute: {compute_type}) ---"
+            f"'{self.model_name}' auf '{requested_device}' (compute: {compute_type}){extra_log} ---"
         )
         try:
-            self.model = whisperx.load_model(
-                self.model_name,
-                device=requested_device,
-                compute_type=compute_type,
-            )
+            try:
+                self.model = whisperx.load_model(self.model_name, **load_kwargs)
+            except TypeError as exc:
+                # Älteres WhisperX kennt asr_options/threads evtl. nicht – sauber degradieren
+                if "asr_options" in load_kwargs or "threads" in load_kwargs:
+                    print(
+                        f"--- POOL: load_model akzeptiert Extra-Kwargs nicht ({exc}), "
+                        f"versuche Minimal-Variante ---"
+                    )
+                    self.model = whisperx.load_model(
+                        self.model_name,
+                        device=requested_device,
+                        compute_type=compute_type,
+                    )
+                else:
+                    raise
         except ValueError as exc:
             if requested_device == "cuda" and "not compiled with CUDA support" in str(exc):
                 fallback_device = "cpu"

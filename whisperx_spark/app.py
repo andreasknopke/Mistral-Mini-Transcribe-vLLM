@@ -68,6 +68,11 @@ def transcribe_request(
     initial_prompt_user="",
     speed_mode=False,
 ):
+    print(
+        "--- API: start_process "
+        f"raw_model={model_name!r} ({type(model_name).__name__}), "
+        f"language={language!r}, device={device!r}, speed_mode={speed_mode}, file={file_path!r} ---"
+    )
     return transcribe_audio(
         file_path=file_path,
         language=language,

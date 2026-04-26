@@ -14,6 +14,8 @@
         </div>
         <div class="topbar-actions">
             <span>Angemeldet als <strong>{{ username }}</strong></span>
+            <button id="spark-restart-btn" type="button" class="warning" title="Spark System neustarten">⟳ Restart</button>
+            <button id="spark-shutdown-btn" type="button" class="danger" title="Spark System herunterfahren">⏻ Shutdown</button>
             <form method="post" action="/logout">
                 <button type="submit">Logout</button>
             </form>

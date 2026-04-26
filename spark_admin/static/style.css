@@ -207,6 +207,16 @@ button.danger {
     color: #fecaca;
 }
 
+button.warning {
+    border-color: rgba(245, 158, 11, 0.4);
+    color: #fde68a;
+}
+
+button.warning:hover {
+    border-color: rgba(245, 158, 11, 0.7);
+    background: rgba(245, 158, 11, 0.15);
+}
+
 label {
     display: flex;
     flex-direction: column;

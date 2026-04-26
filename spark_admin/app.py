@@ -1299,6 +1299,48 @@ async def api_session(request: Request):
     return {"username": username}
 
 
+@app.post("/api/spark/restart")
+async def api_spark_restart(request: Request):
+    """Restart the Spark system (requires sudo)."""
+    require_auth(request)
+    try:
+        subprocess.run(
+            ["sudo", "systemctl", "reboot"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return {"status": "rebooting"}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Reboot failed: {e.stderr}")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Reboot command timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reboot error: {str(e)}")
+
+
+@app.post("/api/spark/shutdown")
+async def api_spark_shutdown(request: Request):
+    """Shutdown the Spark system (requires sudo)."""
+    require_auth(request)
+    try:
+        subprocess.run(
+            ["sudo", "systemctl", "poweroff"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return {"status": "shutting_down"}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Shutdown failed: {e.stderr}")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Shutdown command timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Shutdown error: {str(e)}")
+
+
 @app.exception_handler(401)
 async def unauthorized_handler(request: Request, _: HTTPException):
     if not request.url.path.startswith("/api/"):
