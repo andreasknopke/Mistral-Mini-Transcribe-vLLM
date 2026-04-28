@@ -43,6 +43,50 @@ MODEL_ALIASES = {
 DEBUG_CAPTURE_DIR = os.getenv("WHISPERX_DEBUG_CAPTURE_DIR", "/tmp/whisperx-debug")
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"--- CONFIG: {name}={raw!r} ist kein Float, nutze {default} ---")
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"--- CONFIG: {name}={raw!r} ist kein Int, nutze {default} ---")
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Decoding-/No-Speech-Defaults: bewusst etwas robuster als Whisper-Default,
+# um das Verwerfen ganzer Sätze als "keine Sprache" zu reduzieren.
+NO_SPEECH_THRESHOLD = _env_float("WHISPERX_NO_SPEECH_THRESHOLD", 0.8)
+LOG_PROB_THRESHOLD = _env_float("WHISPERX_LOG_PROB_THRESHOLD", -2.0)
+COMPRESSION_RATIO_THRESHOLD = _env_float("WHISPERX_COMPRESSION_RATIO_THRESHOLD", 2.4)
+CONDITION_ON_PREVIOUS_TEXT = _env_bool("WHISPERX_CONDITION_ON_PREVIOUS_TEXT", False)
+BEAM_SIZE_OVERRIDE = _env_int("WHISPERX_BEAM_SIZE", 5)
+BEAM_SIZE_SPEED = _env_int("WHISPERX_BEAM_SIZE_SPEED", 2)
+
+# Coverage-basierter Auto-Retry: erkennt unterschlagene Sätze (mitten/Ende)
+COVERAGE_RETRY_ENABLED = _env_bool("WHISPERX_COVERAGE_RETRY", True)
+COVERAGE_THRESHOLD = _env_float("WHISPERX_MIN_COVERAGE", 0.6)
+COVERAGE_MIN_AUDIO_SECONDS = _env_float("WHISPERX_COVERAGE_MIN_AUDIO_SECONDS", 5.0)
+
+
 def clear_memory(device: str) -> None:
     gc.collect()
     if device == "cuda" and torch.cuda.is_available():
@@ -86,6 +130,38 @@ def _audio_signal_stats(audio) -> tuple[float, float]:
         return round(rms, 6), round(peak, 6)
     except Exception:
         return 0.0, 0.0
+
+
+def _segment_coverage_seconds(segments) -> float:
+    """Summe der von Segmenten abgedeckten Audiodauer (überlappungsbereinigt)."""
+    intervals: list[tuple[float, float]] = []
+    for segment in segments or []:
+        try:
+            start = float(segment.get("start", 0.0))
+            end = float(segment.get("end", 0.0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if end > start:
+            intervals.append((start, end))
+    if not intervals:
+        return 0.0
+    intervals.sort()
+    merged_start, merged_end = intervals[0]
+    total = 0.0
+    for start, end in intervals[1:]:
+        if start <= merged_end:
+            merged_end = max(merged_end, end)
+        else:
+            total += merged_end - merged_start
+            merged_start, merged_end = start, end
+    total += merged_end - merged_start
+    return total
+
+
+def _segments_text(segments) -> str:
+    if not segments:
+        return ""
+    return " ".join(str(seg.get("text", "")).strip() for seg in segments).strip()
 
 
 def _capture_debug_audio(source_path: str, reason: str, worker_id: int) -> str | None:
@@ -255,20 +331,30 @@ def transcribe_audio(
         worker = model_pool.acquire(resolved_model_name, device, timeout=180)
         model = worker.model
 
-        beam_size = 2 if speed_mode else 5
+        beam_size = BEAM_SIZE_SPEED if speed_mode else BEAM_SIZE_OVERRIDE
+        condition_on_previous = False if speed_mode else CONDITION_ON_PREVIOUS_TEXT
         if hasattr(model, "options"):
             try:
                 if hasattr(model.options, "_replace"):
-                    model.options = model.options._replace(
-                        initial_prompt=combined_prompt,
-                        beam_size=beam_size,
-                        best_of=beam_size,
-                        temperatures=[0.0] if speed_mode else [0.0, 0.2, 0.4],
-                        condition_on_previous_text=not speed_mode,
-                        prompt_reset_on_temperature=0.5,
-                    )
+                    replace_kwargs = {
+                        "initial_prompt": combined_prompt,
+                        "beam_size": beam_size,
+                        "best_of": beam_size,
+                        "temperatures": [0.0] if speed_mode else [0.0, 0.2, 0.4],
+                        "condition_on_previous_text": condition_on_previous,
+                        "prompt_reset_on_temperature": 0.5,
+                        "no_speech_threshold": NO_SPEECH_THRESHOLD,
+                        "log_prob_threshold": LOG_PROB_THRESHOLD,
+                        "compression_ratio_threshold": COMPRESSION_RATIO_THRESHOLD,
+                    }
+                    # Nur Felder setzen, die das aktuelle TranscriptionOptions auch kennt
+                    valid_fields = set(getattr(model.options, "_fields", ()))
+                    filtered = {k: v for k, v in replace_kwargs.items() if k in valid_fields}
+                    model.options = model.options._replace(**filtered)
                 print(
-                    f"--- WORKER {worker.worker_id}: {'Speed-Mode' if speed_mode else 'Deep-Context'} aktiviert (Beam: {beam_size}) ---"
+                    f"--- WORKER {worker.worker_id}: {'Speed-Mode' if speed_mode else 'Deep-Context'} aktiviert "
+                    f"(Beam: {beam_size}, no_speech_thr: {NO_SPEECH_THRESHOLD}, "
+                    f"log_prob_thr: {LOG_PROB_THRESHOLD}, condition_prev: {condition_on_previous}) ---"
                 )
             except Exception as exc:
                 print(f"--- WORKER {worker.worker_id}: Optionen teilweise nicht gesetzt: {exc} ---")
@@ -344,6 +430,53 @@ def transcribe_audio(
                 worker.worker_id,
                 detected_lang,
             )
+
+        # Coverage-basierter Auto-Retry: schützt gegen unterschlagene Sätze
+        # mitten in oder am Ende eines längeren Audios. Wenn die VAD-/Decoding-
+        # Pipeline nur einen kleinen Teil der Audiodauer abdeckt, wird einmalig
+        # ein Full-Audio-Fallback ohne VAD-Segmentierung versucht und das
+        # textlich umfangreichere Ergebnis übernommen.
+        if (
+            COVERAGE_RETRY_ENABLED
+            and not speed_mode
+            and audio_duration >= COVERAGE_MIN_AUDIO_SECONDS
+            and final_segments
+        ):
+            covered = _segment_coverage_seconds(final_segments)
+            ratio = covered / audio_duration if audio_duration > 0 else 1.0
+            if ratio < COVERAGE_THRESHOLD:
+                primary_text = _segments_text(final_segments)
+                print(
+                    f"--- WORKER {worker.worker_id}: Niedrige Segment-Abdeckung "
+                    f"{ratio:.2%} (covered={covered:.2f}s / audio={audio_duration:.2f}s, "
+                    f"chars={len(primary_text)}). Starte Coverage-Retry per Full-Audio-Fallback. ---"
+                )
+                try:
+                    fallback_result = _transcribe_full_audio_fallback(
+                        model,
+                        audio,
+                        transcribe_options.get("language") or detected_lang,
+                        audio_duration,
+                    )
+                    fallback_segments = fallback_result.get("segments", [])
+                    fallback_text = _segments_text(fallback_segments) or fallback_result.get("text", "").strip()
+                    if len(fallback_text) > len(primary_text):
+                        print(
+                            f"--- WORKER {worker.worker_id}: Coverage-Retry liefert mehr Text "
+                            f"({len(fallback_text)} > {len(primary_text)} Zeichen), übernehme Fallback. ---"
+                        )
+                        final_segments = fallback_segments
+                        result = fallback_result
+                        detected_lang = fallback_result.get("language", detected_lang)
+                    else:
+                        print(
+                            f"--- WORKER {worker.worker_id}: Coverage-Retry liefert nicht mehr Text "
+                            f"({len(fallback_text)} <= {len(primary_text)}), behalte Original. ---"
+                        )
+                except Exception as cov_exc:
+                    print(
+                        f"--- WORKER {worker.worker_id}: Coverage-Retry fehlgeschlagen: {cov_exc} ---"
+                    )
 
         if final_segments and not speed_mode:
             alignment_device = os.getenv(
